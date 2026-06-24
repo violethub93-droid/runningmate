@@ -62,6 +62,20 @@ const audioMap = {
 
   // ── 마일스톤 친구형 (파일 없음 → TTS 폴백) ───────────────
   // milestone_friend_1km: require('../../assets/audio/milestone_friend_1km.mp3'),
+
+  // ── 일시정지 / 재시작 / 완주 (v4 신규) ───────────────────
+  paused_coach_01: require('../../assets/audio/paused_coach_01.mp3'),
+  paused_coach_02: require('../../assets/audio/paused_coach_02.mp3'),
+  paused_coach_03: require('../../assets/audio/paused_coach_03.mp3'),
+  paused_friend_01: require('../../assets/audio/paused_friend_01.mp3'),
+  paused_friend_02: require('../../assets/audio/paused_friend_02.mp3'),
+  paused_friend_03: require('../../assets/audio/paused_friend_03.mp3'),
+  resume_coach_01: require('../../assets/audio/resume_coach_01.mp3'),
+  resume_coach_02: require('../../assets/audio/resume_coach_02.mp3'),
+  resume_friend_01: require('../../assets/audio/resume_friend_01.mp3'),
+  resume_friend_02: require('../../assets/audio/resume_friend_02.mp3'),
+  goal_coach_01: require('../../assets/audio/goal_coach_01.mp3'),
+  goal_friend_01: require('../../assets/audio/goal_friend_01.mp3'),
 };
 
 export default audioMap;

@@ -6,22 +6,25 @@ import {
   PACE_THRESHOLDS,
   CADENCE_THRESHOLD,
   FINAL_PUSH_RATIO,
+  HALFWAY_RATIO,
   SLOPE_THRESHOLDS,
 } from '../data/mentData';
 import audioMap from '../data/audioMap';
 
 export class CoachingEngine {
-  constructor({ persona = 'coach', targetPaceSec, targetDistanceKm }) {
+  constructor({ persona = 'coach', targetPaceSec, targetDistanceKm, onGoalReached }) {
     this.persona = persona;
-    this.targetPaceSec = targetPaceSec; // 초/km (예: 7분/km = 420)
+    this.targetPaceSec = targetPaceSec;
     this.targetDistanceKm = targetDistanceKm;
-    this.lastSpoken = {};      // { situationId: timestamp }
-    this.lastVariantIndex = {}; // { situationId: lastIndex } for anti-repeat
+    this.onGoalReached = onGoalReached;
+    this.lastSpoken = {};
+    this.lastVariantIndex = {};
     this.passedMilestones = new Set();
+    this.halfwayPlayed = false;
+    this.goalReached = false;
     this.sound = null;
     this.isSpeaking = false;
 
-    // 오디오 세션 설정 (백그라운드 재생 허용)
     Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
       stayAwakeEnabled: true,
@@ -30,11 +33,23 @@ export class CoachingEngine {
     });
   }
 
-  // 메인 코칭 판단 함수 — RunningScreen에서 매초 호출
-  async evaluate({ currentPaceSec, distanceKm, cadenceSpm, elevationGain, slope }) {
+  // 메인 코칭 판단 함수 — RunningScreen에서 매 5초 호출
+  async evaluate({ currentPaceSec, distanceKm, cadenceSpm, slope }) {
     const now = Date.now();
 
-    // 1. 마일스톤 체크 (최우선)
+    // 1. 목표 완주 체크 (마일스톤보다 우선)
+    if (
+      this.targetDistanceKm > 0 &&
+      !this.goalReached &&
+      distanceKm >= this.targetDistanceKm
+    ) {
+      this.goalReached = true;
+      await this._playSituation('goal', now);
+      this.onGoalReached?.();
+      return;
+    }
+
+    // 2. 마일스톤 체크
     const km = Math.floor(distanceKm);
     if (km >= 1 && !this.passedMilestones.has(km) && km <= 5) {
       this.passedMilestones.add(km);
@@ -42,7 +57,18 @@ export class CoachingEngine {
       return;
     }
 
-    // 2. final_push (목표 거리 85% 이후)
+    // 3. 반환점 체크 (50%)
+    if (
+      this.targetDistanceKm > 0 &&
+      !this.halfwayPlayed &&
+      distanceKm >= this.targetDistanceKm * HALFWAY_RATIO
+    ) {
+      this.halfwayPlayed = true;
+      await this._playSituation('halfway', now);
+      return;
+    }
+
+    // 4. 막바지 체크 (85% ~ 100%)
     if (
       this.targetDistanceKm > 0 &&
       distanceKm >= this.targetDistanceKm * FINAL_PUSH_RATIO &&
@@ -54,7 +80,7 @@ export class CoachingEngine {
       }
     }
 
-    // 페이스가 없으면 idle_checkin만
+    // 페이스 없으면 idle_checkin만
     if (!currentPaceSec || currentPaceSec <= 0) {
       if (this._canSpeak('idle_checkin', now)) {
         await this._playSituation('idle_checkin', now);
@@ -62,7 +88,7 @@ export class CoachingEngine {
       return;
     }
 
-    // 3. 경사 코칭
+    // 5. 경사 코칭
     if (slope !== undefined && slope !== null) {
       if (slope >= SLOPE_THRESHOLDS.uphill && this._canSpeak('uphill_detected', now)) {
         await this._playSituation('uphill_detected', now);
@@ -74,7 +100,7 @@ export class CoachingEngine {
       }
     }
 
-    // 4. 케이던스 코칭
+    // 6. 케이던스 코칭
     if (cadenceSpm && cadenceSpm > 0 && cadenceSpm < CADENCE_THRESHOLD) {
       if (this._canSpeak('cadence_low', now)) {
         await this._playSituation('cadence_low', now);
@@ -82,7 +108,7 @@ export class CoachingEngine {
       }
     }
 
-    // 5. 페이스 코칭
+    // 7. 페이스 코칭
     const ratio = currentPaceSec / this.targetPaceSec;
     if (ratio < PACE_THRESHOLDS.tooFastRatio) {
       if (this._canSpeak('pace_too_fast', now)) {
@@ -95,22 +121,28 @@ export class CoachingEngine {
         return;
       }
     } else {
-      // on_target
       if (this._canSpeak('pace_on_target', now)) {
         await this._playSituation('pace_on_target', now);
         return;
       }
     }
 
-    // 6. 주기적 idle_checkin
+    // 8. 주기적 idle_checkin
     if (this._canSpeak('idle_checkin', now)) {
       await this._playSituation('idle_checkin', now);
     }
   }
 
-  // 러닝 시작 멘트
   async sayStart() {
     await this._playSituation('run_start', Date.now());
+  }
+
+  async sayPaused() {
+    await this._playSituationForced('paused', Date.now());
+  }
+
+  async sayResume() {
+    await this._playSituationForced('resume', Date.now());
   }
 
   _canSpeak(situationId, now) {
@@ -122,13 +154,29 @@ export class CoachingEngine {
   }
 
   async _playSituation(situationId, now) {
+    if (this.isSpeaking) return;
+    await this._playVariant(situationId, now);
+  }
+
+  // isSpeaking 무시하고 강제 재생 (paused/resume 전용)
+  async _playSituationForced(situationId, now) {
+    if (this.sound) {
+      await this.sound.stopAsync().catch(() => {});
+      await this.sound.unloadAsync().catch(() => {});
+      this.sound = null;
+    }
+    Speech.stop();
+    this.isSpeaking = false;
+    await this._playVariant(situationId, now);
+  }
+
+  async _playVariant(situationId, now) {
     const situation = SITUATIONS[situationId];
     if (!situation) return;
 
     const audioKeys = situation.audioKeys?.[this.persona] || [];
     const texts = situation.variants?.[this.persona] || [];
 
-    // anti-repeat: 직전 인덱스와 다른 것 선택
     const lastIdx = this.lastVariantIndex[situationId] ?? -1;
     const count = Math.max(audioKeys.length, texts.length);
     let idx = lastIdx;
@@ -140,9 +188,8 @@ export class CoachingEngine {
     this.lastVariantIndex[situationId] = idx;
     this.lastSpoken[situationId] = now;
 
-    const audioKey = audioKeys[idx] || audioKeys[0];
-    const text = texts[idx] || texts[0];
-
+    const audioKey = audioKeys[idx] ?? audioKeys[0];
+    const text = texts[idx] ?? texts[0];
     await this._play(audioKey, text);
   }
 
@@ -152,21 +199,17 @@ export class CoachingEngine {
     await this._play(audioKey, text);
   }
 
-  // mp3가 audioMap에 있으면 재생, 없으면 TTS
   async _play(audioKey, ttsText) {
     if (this.isSpeaking) return;
     this.isSpeaking = true;
-
     try {
       const source = audioKey ? audioMap[audioKey] : null;
-
       if (source) {
         await this._playSound(source);
       } else if (ttsText) {
         await this._speakTTS(ttsText);
       }
-    } catch (e) {
-      // 재생 실패 시 TTS로 폴백
+    } catch {
       if (ttsText) await this._speakTTS(ttsText);
     } finally {
       this.isSpeaking = false;

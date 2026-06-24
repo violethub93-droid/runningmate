@@ -1,27 +1,40 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  SafeAreaView, StatusBar, Vibration, Platform,
+  SafeAreaView, StatusBar, Vibration,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Accelerometer } from 'expo-sensors';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { CoachingEngine } from '../engine/CoachingEngine';
 
-const COACHING_INTERVAL_MS = 5000; // 5초마다 코칭 엔진 평가
-const GPS_UPDATE_MS = 2000;        // GPS 2초 간격
+const COACHING_INTERVAL_MS = 5000;
+const GPS_UPDATE_MS = 2000;
+const AUTO_PAUSE_SPEED_MPS = 0.3;   // 이 속도 이하 3연속 → 자동 일시정지
+const AUTO_RESUME_SPEED_MPS = 0.5;  // 이 속도 이상 → 자동 재시작
+const AUTO_PAUSE_COUNT = 3;          // 연속 저속 감지 횟수
 
 export default function RunningScreen({ route, navigation }) {
   const { persona, targetPaceSec, targetDistanceKm } = route.params;
 
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [distanceKm, setDistanceKm] = useState(0);
-  const [currentPaceSec, setCurrentPaceSec] = useState(0); // 초/km
+  const [currentPaceSec, setCurrentPaceSec] = useState(0);
   const [cadenceSpm, setCadenceSpm] = useState(0);
-  const [lastCoachingText, setLastCoachingText] = useState('');
   const [locationError, setLocationError] = useState(null);
+
+  // 코칭 타이머 내 스테일 클로저 방지용 refs
+  const currentPaceRef = useRef(0);
+  const distanceKmRef = useRef(0);
+  const cadenceSpmRef = useRef(0);
+  const elapsedSecRef = useRef(0);
+
+  // 자동 일시정지 상태 ref (GPS 콜백 내에서 최신값 필요)
+  const isAutoPausedRef = useRef(false);
+  const slowReadingsRef = useRef(0);
 
   const engineRef = useRef(null);
   const timerRef = useRef(null);
@@ -29,7 +42,6 @@ export default function RunningScreen({ route, navigation }) {
   const locationSubscriptionRef = useRef(null);
   const accelSubscriptionRef = useRef(null);
   const prevLocationRef = useRef(null);
-  const stepCountRef = useRef(0);
   const accelWindowRef = useRef([]);
 
   const paceLabel = (sec) => {
@@ -66,7 +78,6 @@ export default function RunningScreen({ route, navigation }) {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  // GPS 거리 계산 (Haversine)
   const haversineKm = (loc1, loc2) => {
     const R = 6371;
     const dLat = ((loc2.latitude - loc1.latitude) * Math.PI) / 180;
@@ -79,27 +90,101 @@ export default function RunningScreen({ route, navigation }) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
-  // 가속도계로 케이던스 추정 (피크 감지)
   const updateCadence = useCallback((accelData) => {
     const mag = Math.sqrt(accelData.x ** 2 + accelData.y ** 2 + accelData.z ** 2);
     const win = accelWindowRef.current;
     win.push({ mag, time: Date.now() });
-    if (win.length > 50) win.shift(); // 약 1초 윈도우(50ms 간격)
-
-    // 1초 넘으면 피크 카운트 → spm 추정
+    if (win.length > 50) win.shift();
     if (win.length >= 50) {
       const avg = win.reduce((s, w) => s + w.mag, 0) / win.length;
       let peaks = 0;
       for (let i = 1; i < win.length - 1; i++) {
         if (win[i].mag > avg * 1.05 && win[i].mag >= win[i - 1].mag && win[i].mag >= win[i + 1].mag) peaks++;
       }
-      const spm = peaks * 60; // 1초 윈도우이므로 60 곱
-      setCadenceSpm(Math.min(spm, 220)); // 이상치 제한
+      const spm = Math.min(peaks * 60, 220);
+      setCadenceSpm(spm);
+      cadenceSpmRef.current = spm;
     }
   }, []);
 
+  const startTimer = () => {
+    timerRef.current = setInterval(() => {
+      setElapsedSec((s) => {
+        elapsedSecRef.current = s + 1;
+        return s + 1;
+      });
+    }, 1000);
+  };
+
+  const stopTimer = () => {
+    clearInterval(timerRef.current);
+    timerRef.current = null;
+  };
+
+  const startCoachingLoop = () => {
+    coachingTimerRef.current = setInterval(async () => {
+      if (engineRef.current && !isAutoPausedRef.current) {
+        await engineRef.current.evaluate({
+          currentPaceSec: currentPaceRef.current,
+          distanceKm: distanceKmRef.current,
+          cadenceSpm: cadenceSpmRef.current,
+          slope: null,
+        });
+      }
+    }, COACHING_INTERVAL_MS);
+  };
+
+  // GPS 콜백 — auto-pause/resume 포함. isPaused(수동)와 별개로 동작.
+  const makeGpsCallback = () => (loc) => {
+    const speed = loc.coords.speed ?? 0;
+
+    // 자동 일시정지/재시작 감지
+    if (speed < AUTO_PAUSE_SPEED_MPS) {
+      slowReadingsRef.current += 1;
+      if (slowReadingsRef.current >= AUTO_PAUSE_COUNT && !isAutoPausedRef.current) {
+        isAutoPausedRef.current = true;
+        setIsAutoPaused(true);
+        stopTimer();
+        engineRef.current?.sayPaused();
+      }
+    } else {
+      if (isAutoPausedRef.current && speed >= AUTO_RESUME_SPEED_MPS) {
+        isAutoPausedRef.current = false;
+        setIsAutoPaused(false);
+        slowReadingsRef.current = 0;
+        startTimer();
+        engineRef.current?.sayResume();
+      } else if (!isAutoPausedRef.current) {
+        slowReadingsRef.current = 0;
+      }
+    }
+
+    // 자동 일시정지 중엔 거리·페이스 동결
+    if (isAutoPausedRef.current) {
+      prevLocationRef.current = loc;
+      return;
+    }
+
+    const prev = prevLocationRef.current;
+    if (prev) {
+      const d = haversineKm(prev.coords, loc.coords);
+      if (d > 0.003) {
+        setDistanceKm((km) => {
+          const newKm = km + d;
+          distanceKmRef.current = newKm;
+          return newKm;
+        });
+      }
+      if (speed > 0.5) {
+        const paceSec = Math.min(Math.round(1000 / speed), 900);
+        setCurrentPaceSec(paceSec);
+        currentPaceRef.current = paceSec;
+      }
+    }
+    prevLocationRef.current = loc;
+  };
+
   const startRun = async () => {
-    // 위치 권한
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
       setLocationError('위치 권한이 필요해요. 설정에서 허용해주세요.');
@@ -108,60 +193,39 @@ export default function RunningScreen({ route, navigation }) {
 
     setIsRunning(true);
     setIsPaused(false);
+    setIsAutoPaused(false);
+    isAutoPausedRef.current = false;
+    slowReadingsRef.current = 0;
     activateKeepAwakeAsync();
 
-    // 코칭 엔진 생성
-    engineRef.current = new CoachingEngine({ persona, targetPaceSec, targetDistanceKm });
+    engineRef.current = new CoachingEngine({
+      persona,
+      targetPaceSec,
+      targetDistanceKm,
+      onGoalReached: () => finishRunRef.current?.(),
+    });
     await engineRef.current.sayStart();
 
-    // 타이머
-    timerRef.current = setInterval(() => {
-      setElapsedSec((s) => s + 1);
-    }, 1000);
+    startTimer();
 
-    // GPS 구독
     locationSubscriptionRef.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS, distanceInterval: 5 },
-      (loc) => {
-        const prev = prevLocationRef.current;
-        if (prev) {
-          const d = haversineKm(prev.coords, loc.coords);
-          if (d > 0.003) { // 노이즈 필터: 3m 이상만
-            setDistanceKm((km) => {
-              const newKm = km + d;
-              return newKm;
-            });
-          }
-          // 속도로 페이스 계산 (m/s → 초/km)
-          if (loc.coords.speed && loc.coords.speed > 0.5) {
-            const paceSec = Math.round(1000 / loc.coords.speed);
-            setCurrentPaceSec(Math.min(paceSec, 900)); // 최대 15분/km
-          }
-        }
-        prevLocationRef.current = loc;
-      }
+      makeGpsCallback()
     );
 
-    // 가속도계 구독
     Accelerometer.setUpdateInterval(50);
     accelSubscriptionRef.current = Accelerometer.addListener(updateCadence);
 
-    // 코칭 엔진 평가 루프
-    coachingTimerRef.current = setInterval(async () => {
-      if (engineRef.current) {
-        await engineRef.current.evaluate({
-          currentPaceSec,
-          distanceKm,
-          cadenceSpm,
-          slope: null, // Phase 2에서 고도 데이터 연결
-        });
-      }
-    }, COACHING_INTERVAL_MS);
+    startCoachingLoop();
   };
 
   const pauseRun = () => {
     setIsPaused(true);
-    clearInterval(timerRef.current);
+    // 수동 일시정지 시 자동 일시정지도 해제
+    isAutoPausedRef.current = false;
+    setIsAutoPaused(false);
+    slowReadingsRef.current = 0;
+    stopTimer();
     clearInterval(coachingTimerRef.current);
     locationSubscriptionRef.current?.remove();
     accelSubscriptionRef.current?.remove();
@@ -169,31 +233,23 @@ export default function RunningScreen({ route, navigation }) {
 
   const resumeRun = async () => {
     setIsPaused(false);
-    timerRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    setIsAutoPaused(false);
+    isAutoPausedRef.current = false;
+    slowReadingsRef.current = 0;
+
+    startTimer();
+
     locationSubscriptionRef.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS, distanceInterval: 5 },
-      (loc) => {
-        const prev = prevLocationRef.current;
-        if (prev) {
-          const d = haversineKm(prev.coords, loc.coords);
-          if (d > 0.003) setDistanceKm((km) => km + d);
-          if (loc.coords.speed && loc.coords.speed > 0.5) {
-            setCurrentPaceSec(Math.round(1000 / loc.coords.speed));
-          }
-        }
-        prevLocationRef.current = loc;
-      }
+      makeGpsCallback()
     );
+
     accelSubscriptionRef.current = Accelerometer.addListener(updateCadence);
-    coachingTimerRef.current = setInterval(async () => {
-      if (engineRef.current) {
-        await engineRef.current.evaluate({ currentPaceSec, distanceKm, cadenceSpm, slope: null });
-      }
-    }, COACHING_INTERVAL_MS);
+    startCoachingLoop();
   };
 
-  const finishRun = async () => {
-    clearInterval(timerRef.current);
+  const finishRun = useCallback(async () => {
+    stopTimer();
     clearInterval(coachingTimerRef.current);
     locationSubscriptionRef.current?.remove();
     accelSubscriptionRef.current?.remove();
@@ -201,35 +257,27 @@ export default function RunningScreen({ route, navigation }) {
     deactivateKeepAwake();
     Vibration.vibrate(200);
 
-    const avgPaceSec = elapsedSec > 0 && distanceKm > 0
-      ? Math.round(elapsedSec / distanceKm)
-      : 0;
-
+    const elapsed = elapsedSecRef.current;
+    const dist = distanceKmRef.current;
     navigation.replace('Summary', {
-      elapsedSec,
-      distanceKm,
-      avgPaceSec,
+      elapsedSec: elapsed,
+      distanceKm: dist,
+      avgPaceSec: elapsed > 0 && dist > 0 ? Math.round(elapsed / dist) : 0,
       persona,
       targetPaceSec,
       targetDistanceKm,
     });
-  };
+  }, [navigation, persona, targetPaceSec, targetDistanceKm]);
 
-  // 코칭 평가 시 distanceKm, currentPaceSec, cadenceSpm 최신값 전달
+  // 엔진의 onGoalReached 콜백이 항상 최신 finishRun을 참조하도록
+  const finishRunRef = useRef(finishRun);
   useEffect(() => {
-    if (coachingTimerRef.current) {
-      clearInterval(coachingTimerRef.current);
-      coachingTimerRef.current = setInterval(async () => {
-        if (engineRef.current && isRunning && !isPaused) {
-          await engineRef.current.evaluate({ currentPaceSec, distanceKm, cadenceSpm, slope: null });
-        }
-      }, COACHING_INTERVAL_MS);
-    }
-  }, [currentPaceSec, distanceKm, cadenceSpm, isRunning, isPaused]);
+    finishRunRef.current = finishRun;
+  }, [finishRun]);
 
   useEffect(() => {
     return () => {
-      clearInterval(timerRef.current);
+      stopTimer();
       clearInterval(coachingTimerRef.current);
       locationSubscriptionRef.current?.remove();
       accelSubscriptionRef.current?.remove();
@@ -258,7 +306,6 @@ export default function RunningScreen({ route, navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
-
       <View style={styles.container}>
 
         {/* 상단: 목표 페이스 */}
@@ -267,14 +314,23 @@ export default function RunningScreen({ route, navigation }) {
           <Text style={styles.personaTag}>{persona === 'coach' ? '코치형' : '친구형'}</Text>
         </View>
 
+        {/* 자동 일시정지 배너 */}
+        {isAutoPaused && (
+          <View style={styles.autoPauseBanner}>
+            <Text style={styles.autoPauseText}>🚦 신호 감지 — 자동 일시정지 중</Text>
+          </View>
+        )}
+
         {/* 메인 지표 */}
         <View style={styles.mainMetrics}>
           <View style={styles.metricBig}>
             <Text style={styles.metricBigLabel}>현재 페이스</Text>
-            <Text style={[styles.metricBigValue, { color: statusColor }]}>
-              {paceLabel(currentPaceSec)}
+            <Text style={[styles.metricBigValue, { color: isAutoPaused ? '#555' : statusColor }]}>
+              {isAutoPaused ? '--:--' : paceLabel(currentPaceSec)}
             </Text>
-            <Text style={[styles.metricBigUnit, { color: statusColor }]}>/km  {statusText}</Text>
+            <Text style={[styles.metricBigUnit, { color: isAutoPaused ? '#555' : statusColor }]}>
+              /km  {isAutoPaused ? '일시정지' : statusText}
+            </Text>
           </View>
         </View>
 
@@ -313,14 +369,6 @@ export default function RunningScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* 마지막 코칭 멘트 표시 영역 */}
-        <View style={styles.coachingBox}>
-          <Text style={styles.coachingIcon}>💬</Text>
-          <Text style={styles.coachingText}>
-            {lastCoachingText || (isRunning ? '달리는 중...' : '시작 버튼을 눌러요')}
-          </Text>
-        </View>
-
         {/* 컨트롤 버튼 */}
         <View style={styles.controls}>
           {!isRunning ? (
@@ -351,13 +399,19 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#0a0a0a' },
   container: { flex: 1, paddingHorizontal: 24, paddingTop: 12 },
 
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   targetLabel: { fontSize: 14, color: '#666', fontWeight: '600' },
   personaTag: {
     fontSize: 12, color: '#4ADE80', fontWeight: '700',
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10,
     borderWidth: 1, borderColor: '#4ADE80',
   },
+
+  autoPauseBanner: {
+    backgroundColor: '#1a1400', borderWidth: 1, borderColor: '#F59E0B',
+    borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16, marginBottom: 12, alignItems: 'center',
+  },
+  autoPauseText: { fontSize: 13, color: '#F59E0B', fontWeight: '700' },
 
   mainMetrics: { alignItems: 'center', marginBottom: 32 },
   metricBig: { alignItems: 'center' },
@@ -380,14 +434,7 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', backgroundColor: '#4ADE80', borderRadius: 3 },
   progressText: { fontSize: 12, color: '#444', textAlign: 'right' },
 
-  coachingBox: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-    backgroundColor: '#111', borderRadius: 16, padding: 16, marginBottom: 24, minHeight: 60,
-  },
-  coachingIcon: { fontSize: 18, marginTop: 1 },
-  coachingText: { flex: 1, fontSize: 15, color: '#bbb', lineHeight: 22 },
-
-  controls: { flexDirection: 'row', gap: 12 },
+  controls: { flexDirection: 'row', gap: 12, marginTop: 'auto', paddingBottom: 8 },
   btnStart: {
     flex: 1, backgroundColor: '#4ADE80', borderRadius: 18,
     paddingVertical: 20, alignItems: 'center',

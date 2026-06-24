@@ -128,6 +128,67 @@ export const SITUATIONS = {
       friend: ['final_push_friend_01'],
     },
   },
+  halfway: {
+    cooldown_sec: 0,
+    variants: {
+      coach: [
+        '절반 왔어요. 호흡 한 번 고르고 후반 준비해요.',
+        '반환점이에요. 지금까지 잘 왔어요, 이대로.',
+      ],
+      friend: [
+        '절반 왔다! 호흡 고르고 후반 가자.',
+        '반 왔어, 잘하고 있어!',
+      ],
+    },
+    audioKeys: { coach: [], friend: [] },
+  },
+  paused: {
+    cooldown_sec: 0,
+    variants: {
+      coach: [
+        '지금 타이밍에 잠시 재정비해요.',
+        '신발끈 풀렸는지 한번 확인해요.',
+        '발목 돌리고, 종아리 한번 풀어줘요.',
+      ],
+      friend: [
+        '잠깐 쉬자, 재정비 한번.',
+        '신발끈 한번 확인하고~',
+        '발목 종아리 살짝 풀자.',
+      ],
+    },
+    audioKeys: {
+      coach: ['paused_coach_01', 'paused_coach_02', 'paused_coach_03'],
+      friend: ['paused_friend_01', 'paused_friend_02', 'paused_friend_03'],
+    },
+  },
+  resume: {
+    cooldown_sec: 0,
+    variants: {
+      coach: [
+        '다시 가볼까요. 천천히 출발해요.',
+        '좋아요, 다시 출발. 페이스 서서히 올려요.',
+      ],
+      friend: [
+        '자, 다시 가자!',
+        '좋아 다시 출발하자~',
+      ],
+    },
+    audioKeys: {
+      coach: ['resume_coach_01', 'resume_coach_02'],
+      friend: ['resume_friend_01', 'resume_friend_02'],
+    },
+  },
+  goal: {
+    cooldown_sec: 0,
+    variants: {
+      coach: ['목표 거리 완주! 오늘도 끝까지 잘 해냈어요.'],
+      friend: ['목표 완주! 진짜 잘했어, 고생했어!'],
+    },
+    audioKeys: {
+      coach: ['goal_coach_01'],
+      friend: ['goal_friend_01'],
+    },
+  },
 };
 
 export const MILESTONES = {
@@ -180,6 +241,9 @@ export const CADENCE_THRESHOLD = 160; // 이 이하면 cadence_low 트리거
 
 // final_push 시작 거리 (목표 거리의 이 비율부터)
 export const FINAL_PUSH_RATIO = 0.85;
+
+// halfway 트리거 (목표 거리의 이 비율)
+export const HALFWAY_RATIO = 0.5;
 
 // 경사 임계값 (%)
 export const SLOPE_THRESHOLDS = {

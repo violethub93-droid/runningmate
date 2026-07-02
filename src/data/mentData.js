@@ -70,7 +70,7 @@ export const SITUATIONS = {
     },
     audioKeys: {
       coach: ['cadence_low_coach_01'],
-      friend: ['cadence_low_coach_01'],
+      friend: ['cadence_low_friend_01'],
     },
   },
   uphill_detected: {
@@ -95,7 +95,7 @@ export const SITUATIONS = {
     },
     audioKeys: {
       coach: ['downhill_coach_01'],
-      friend: ['downhill_coach_01'],
+      friend: ['downhill_friend_01'],
     },
   },
   idle_checkin: {
@@ -218,10 +218,10 @@ export const MILESTONES = {
     },
     friend: {
       1: 'milestone_friend_1km',
-      2: 'milestone_coach_2km',
-      3: 'milestone_coach_3km',
-      4: 'milestone_coach_4km',
-      5: 'milestone_coach_5km',
+      2: 'milestone_friend_2km',
+      3: 'milestone_friend_3km',
+      4: 'milestone_friend_4km',
+      5: 'milestone_friend_5km',
     },
   },
 };

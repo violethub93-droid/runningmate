@@ -11,7 +11,8 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "달리는 동안 GPS로 페이스와 거리를 추적해요.",
         "NSLocationAlwaysUsageDescription": "달리는 동안 GPS로 페이스와 거리를 추적해요.",
-        "NSMotionUsageDescription": "케이던스(보폭 빈도) 측정에 사용돼요."
+        "NSMotionUsageDescription": "케이던스(보폭 빈도) 측정에 사용돼요.",
+        "UIBackgroundModes": ["audio"]
       }
     },
     "android": {

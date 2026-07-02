@@ -11,6 +11,9 @@ import {
 } from '../data/mentData';
 import audioMap from '../data/audioMap';
 
+// 오디오 세션 인터럽트/언로드로 didJustFinish가 영영 안 올 때를 대비한 최대 대기 시간
+const PLAYBACK_TIMEOUT_MS = 15000;
+
 export class CoachingEngine {
   constructor({ persona = 'coach', targetPaceSec, targetDistanceKm, onGoalReached }) {
     this.persona = persona;
@@ -27,7 +30,7 @@ export class CoachingEngine {
 
     Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
-      stayAwakeEnabled: true,
+      staysActiveInBackground: true,
       playsInSilentModeIOS: true,
       shouldDuckAndroid: true,
     });
@@ -224,11 +227,18 @@ export class CoachingEngine {
     const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: true });
     this.sound = sound;
     await new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
       sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) resolve();
+        if (status.didJustFinish || status.error || !status.isLoaded) finish();
       });
+      setTimeout(finish, PLAYBACK_TIMEOUT_MS);
     });
-    await sound.unloadAsync();
+    await sound.unloadAsync().catch(() => {});
     this.sound = null;
   }
 

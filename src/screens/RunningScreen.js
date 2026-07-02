@@ -44,6 +44,9 @@ export default function RunningScreen({ route, navigation }) {
   const prevLocationRef = useRef(null);
   const accelWindowRef = useRef([]);
 
+  // 시작/재개 연타 시 GPS·가속도 구독이 중복 생성되는 것을 막는 락
+  const transitionLockRef = useRef(false);
+
   const paceLabel = (sec) => {
     if (!sec || sec <= 0) return '--:--';
     const m = Math.floor(sec / 60);
@@ -108,6 +111,7 @@ export default function RunningScreen({ route, navigation }) {
   }, []);
 
   const startTimer = () => {
+    if (timerRef.current) return;
     timerRef.current = setInterval(() => {
       setElapsedSec((s) => {
         elapsedSecRef.current = s + 1;
@@ -122,6 +126,7 @@ export default function RunningScreen({ route, navigation }) {
   };
 
   const startCoachingLoop = () => {
+    if (coachingTimerRef.current) return;
     coachingTimerRef.current = setInterval(async () => {
       if (engineRef.current && !isAutoPausedRef.current) {
         await engineRef.current.evaluate({
@@ -136,26 +141,28 @@ export default function RunningScreen({ route, navigation }) {
 
   // GPS 콜백 — auto-pause/resume 포함. isPaused(수동)와 별개로 동작.
   const makeGpsCallback = () => (loc) => {
-    const speed = loc.coords.speed ?? 0;
+    const speed = loc.coords.speed;
 
-    // 자동 일시정지/재시작 감지
-    if (speed < AUTO_PAUSE_SPEED_MPS) {
-      slowReadingsRef.current += 1;
-      if (slowReadingsRef.current >= AUTO_PAUSE_COUNT && !isAutoPausedRef.current) {
-        isAutoPausedRef.current = true;
-        setIsAutoPaused(true);
-        stopTimer();
-        engineRef.current?.sayPaused();
-      }
-    } else {
-      if (isAutoPausedRef.current && speed >= AUTO_RESUME_SPEED_MPS) {
-        isAutoPausedRef.current = false;
-        setIsAutoPaused(false);
-        slowReadingsRef.current = 0;
-        startTimer();
-        engineRef.current?.sayResume();
-      } else if (!isAutoPausedRef.current) {
-        slowReadingsRef.current = 0;
+    // 자동 일시정지/재시작 감지 — speed를 못 받는 기기/순간엔 판단을 건너뜀
+    if (speed != null) {
+      if (speed < AUTO_PAUSE_SPEED_MPS) {
+        slowReadingsRef.current += 1;
+        if (slowReadingsRef.current >= AUTO_PAUSE_COUNT && !isAutoPausedRef.current) {
+          isAutoPausedRef.current = true;
+          setIsAutoPaused(true);
+          stopTimer();
+          engineRef.current?.sayPaused();
+        }
+      } else {
+        if (isAutoPausedRef.current && speed >= AUTO_RESUME_SPEED_MPS) {
+          isAutoPausedRef.current = false;
+          setIsAutoPaused(false);
+          slowReadingsRef.current = 0;
+          startTimer();
+          engineRef.current?.sayResume();
+        } else if (!isAutoPausedRef.current) {
+          slowReadingsRef.current = 0;
+        }
       }
     }
 
@@ -185,38 +192,49 @@ export default function RunningScreen({ route, navigation }) {
   };
 
   const startRun = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      setLocationError('위치 권한이 필요해요. 설정에서 허용해주세요.');
-      return;
+    if (transitionLockRef.current) return;
+    transitionLockRef.current = true;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationError('위치 권한이 필요해요. 설정에서 허용해주세요.');
+        return;
+      }
+
+      setIsRunning(true);
+      setIsPaused(false);
+      setIsAutoPaused(false);
+      isAutoPausedRef.current = false;
+      slowReadingsRef.current = 0;
+      activateKeepAwakeAsync();
+
+      engineRef.current = new CoachingEngine({
+        persona,
+        targetPaceSec,
+        targetDistanceKm,
+        onGoalReached: () => finishRunRef.current?.(),
+      });
+      await engineRef.current.sayStart();
+
+      startTimer();
+
+      locationSubscriptionRef.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS, distanceInterval: 5 },
+        makeGpsCallback()
+      );
+
+      Accelerometer.setUpdateInterval(50);
+      accelSubscriptionRef.current = Accelerometer.addListener(updateCadence);
+
+      startCoachingLoop();
+    } finally {
+      transitionLockRef.current = false;
     }
+  };
 
-    setIsRunning(true);
-    setIsPaused(false);
-    setIsAutoPaused(false);
-    isAutoPausedRef.current = false;
-    slowReadingsRef.current = 0;
-    activateKeepAwakeAsync();
-
-    engineRef.current = new CoachingEngine({
-      persona,
-      targetPaceSec,
-      targetDistanceKm,
-      onGoalReached: () => finishRunRef.current?.(),
-    });
-    await engineRef.current.sayStart();
-
-    startTimer();
-
-    locationSubscriptionRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS, distanceInterval: 5 },
-      makeGpsCallback()
-    );
-
-    Accelerometer.setUpdateInterval(50);
-    accelSubscriptionRef.current = Accelerometer.addListener(updateCadence);
-
-    startCoachingLoop();
+  const stopCoachingLoop = () => {
+    clearInterval(coachingTimerRef.current);
+    coachingTimerRef.current = null;
   };
 
   const pauseRun = () => {
@@ -226,31 +244,37 @@ export default function RunningScreen({ route, navigation }) {
     setIsAutoPaused(false);
     slowReadingsRef.current = 0;
     stopTimer();
-    clearInterval(coachingTimerRef.current);
+    stopCoachingLoop();
     locationSubscriptionRef.current?.remove();
     accelSubscriptionRef.current?.remove();
   };
 
   const resumeRun = async () => {
-    setIsPaused(false);
-    setIsAutoPaused(false);
-    isAutoPausedRef.current = false;
-    slowReadingsRef.current = 0;
+    if (transitionLockRef.current) return;
+    transitionLockRef.current = true;
+    try {
+      setIsPaused(false);
+      setIsAutoPaused(false);
+      isAutoPausedRef.current = false;
+      slowReadingsRef.current = 0;
 
-    startTimer();
+      startTimer();
 
-    locationSubscriptionRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS, distanceInterval: 5 },
-      makeGpsCallback()
-    );
+      locationSubscriptionRef.current = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS, distanceInterval: 5 },
+        makeGpsCallback()
+      );
 
-    accelSubscriptionRef.current = Accelerometer.addListener(updateCadence);
-    startCoachingLoop();
+      accelSubscriptionRef.current = Accelerometer.addListener(updateCadence);
+      startCoachingLoop();
+    } finally {
+      transitionLockRef.current = false;
+    }
   };
 
   const finishRun = useCallback(async () => {
     stopTimer();
-    clearInterval(coachingTimerRef.current);
+    stopCoachingLoop();
     locationSubscriptionRef.current?.remove();
     accelSubscriptionRef.current?.remove();
     await engineRef.current?.destroy();
@@ -278,7 +302,7 @@ export default function RunningScreen({ route, navigation }) {
   useEffect(() => {
     return () => {
       stopTimer();
-      clearInterval(coachingTimerRef.current);
+      stopCoachingLoop();
       locationSubscriptionRef.current?.remove();
       accelSubscriptionRef.current?.remove();
       engineRef.current?.destroy();

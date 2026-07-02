@@ -13,15 +13,22 @@
     "expo-speech": "~56.0.3",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.85.3",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "4.25.2"
+    "react-native-screens": "4.25.2",
+    "react-native-web": "^0.21.2"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "predeploy": "expo export -p web",
+    "deploy": "gh-pages --nojekyll -d dist"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "gh-pages": "^6.3.0"
+  }
 }

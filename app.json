@@ -39,6 +39,9 @@
           "locationAlwaysAndWhenInUsePermission": "달리는 동안 GPS로 페이스와 거리를 추적해요."
         }
       ]
-    ]
+    ],
+    "experiments": {
+      "baseUrl": "/runningmate"
+    }
   }
 }

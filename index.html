@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>러닝메이트 — v6</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{--night:#0B0E14;--surface:#141A26;--surface-2:#1C2433;--line:#26303F;--warm:#FF8A5B;--warm-soft:#3A2A24;--good:#4FD1A8;--good-soft:#1C3330;--text:#EAEDF4;--muted:#8A93A6;--cool:#6B7FA3;--bad:#E5736B;--blue:#6BA8E5;--disp:"Space Grotesk","Noto Sans KR",sans-serif;--body:"Noto Sans KR","Inter",sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#05070B;font-family:var(--body);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px 10px}
+  .frame{width:100%;max-width:412px;background:var(--night);border:1px solid #1A2230;border-radius:30px;overflow:hidden;position:relative;min-height:820px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  .screen{display:none;flex-direction:column;padding:30px 20px 20px;min-height:820px}
+  .screen.active{display:flex}
+  .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cool);font-weight:500}
+  .brand{font-family:var(--disp);font-size:20px;font-weight:600;margin-top:2px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:13px}
+  .card+.card{margin-top:9px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .lbl{font-size:13px;color:var(--muted)}
+  .sub{font-size:11px;color:var(--cool);margin-top:2px;line-height:1.4}
+  .seg{display:flex;gap:5px}
+  .seg button{flex:1;background:var(--surface-2);border:1px solid var(--line);color:var(--muted);border-radius:9px;padding:8px 2px;font-family:var(--body);font-size:11.5px;font-weight:500;cursor:pointer}
+  .seg button.sel{border-color:var(--warm);color:var(--warm);background:var(--warm-soft)}
+  .stepper{display:flex;align-items:center;gap:11px}
+  .stepper button{width:31px;height:31px;border-radius:9px;background:var(--surface-2);border:1px solid var(--line);color:var(--text);font-size:16px;cursor:pointer;font-family:var(--disp)}
+  .stepper .val{font-family:var(--disp);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;min-width:66px;text-align:center}
+  .stepper .val small{font-size:10px;color:var(--muted);font-weight:400}
+  .persona-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .persona-btn{background:var(--surface-2);border:1px solid var(--line);color:var(--muted);border-radius:11px;padding:11px 6px;cursor:pointer;font-size:13px;font-weight:500}
+  .persona-btn .pb-emoji{display:block;font-size:16px;margin-bottom:2px}
+  .persona-btn.sel{border-color:var(--warm);color:var(--warm);background:var(--warm-soft)}
+  .btn{font-family:var(--disp);font-weight:600;font-size:15px;border:none;border-radius:14px;cursor:pointer;width:100%;padding:15px;transition:transform .12s,filter .2s}
+  .btn:active{transform:scale(.98)}
+  .btn-go{background:var(--warm);color:#1A0E08;margin-top:9px}
+  .btn-ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+  .btn-end{background:var(--surface-2);color:var(--warm);border:1px solid var(--warm-soft)}
+  .runbtns{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}
+  .btn-pause{background:var(--surface-2);color:var(--blue);border:1px solid #25364A}
+  .run-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+  .gps{font-size:11px;padding:5px 10px;border-radius:20px;font-weight:500;background:var(--surface);border:1px solid var(--line)}
+  .gps.good{color:var(--good)}.gps.ok{color:var(--warm)}.gps.bad{color:var(--bad)}.gps.pause{color:var(--blue);background:#13202E;border-color:#25364A}
+  .mute-tog{font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:5px 10px;cursor:pointer}
+  .prog{height:5px;background:var(--surface-2);border-radius:3px;margin:8px 0 2px;overflow:hidden}
+  .prog>div{height:100%;background:var(--warm);width:0%;transition:width .6s}
+  .pace-block{text-align:center;margin:6px 0 2px}
+  .pace-label{font-size:12px;color:var(--muted)}
+  .pace-big{font-family:var(--disp);font-size:68px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .pace-big.paused{color:var(--blue)}
+  .pace-unit{font-size:12px;color:var(--muted)}
+  .debug{font-size:10px;color:var(--cool);margin-top:6px;font-variant-numeric:tabular-nums}
+  .debug b{color:var(--muted);font-weight:500}
+  .aok{color:var(--good)}.amiss{color:var(--bad)}
+  .metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px}
+  .metric{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:9px 4px;text-align:center}
+  .metric .m-val{font-family:var(--disp);font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+  .metric .m-lbl{font-size:10px;color:var(--muted);margin-top:2px}
+  .coach{margin-top:9px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:11px 13px;display:flex;gap:10px;align-items:center;min-height:62px;transition:border-color .3s,background .3s}
+  .coach.speaking{border-color:var(--warm);background:#1A1410}
+  .coach.paused{border-color:#25364A;background:#101824}
+  .coach-orb{width:38px;height:38px;border-radius:50%;flex-shrink:0;background:radial-gradient(circle at 50% 45%,#2A1C14,#171008);display:flex;align-items:center;justify-content:center;border:1px solid var(--warm-soft)}
+  .coach.speaking .coach-orb{border-color:var(--warm)}
+  .mini-wave{display:flex;gap:2.5px;align-items:center;height:14px}
+  .mini-wave span{width:3px;border-radius:2px;background:var(--warm);height:5px}
+  .coach.speaking .mini-wave span{animation:talk .7s ease-in-out infinite}
+  .coach.speaking .mini-wave span:nth-child(2){animation-delay:.1s}.coach.speaking .mini-wave span:nth-child(3){animation-delay:.2s}.coach.speaking .mini-wave span:nth-child(4){animation-delay:.3s}
+  @keyframes talk{0%,100%{height:4px}50%{height:12px}}
+  .coach-text{font-size:13.5px;line-height:1.4}
+  .coach-text .who{font-size:10px;color:var(--warm);letter-spacing:.05em;display:block;margin-bottom:2px;font-weight:500}
+  .log{margin-top:9px;background:#0E1320;border:1px solid var(--line);border-radius:11px;padding:8px 10px;flex:1;min-height:70px;max-height:120px;overflow-y:auto}
+  .log .log-title{font-size:10px;color:var(--cool);letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px}
+  .log-item{font-size:11px;color:#C2C9D6;padding:3px 0;border-bottom:1px solid #161D2C;display:flex;gap:6px}
+  .log-item .t{color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;font-family:var(--disp)}
+  .log-item .gap{color:var(--cool);flex-shrink:0;font-variant-numeric:tabular-nums;font-size:10px}
+  .log-item .src{flex-shrink:0;font-size:10px}
+  .src.f-ok{color:var(--good)}.src.f-miss{color:var(--bad)}.src.f-pz{color:var(--blue)}
+  .sum-hero{text-align:center;margin:12px 0 14px}
+  .sum-hero .dist{font-family:var(--disp);font-size:50px;font-weight:600;font-variant-numeric:tabular-nums}
+  .sum-hero .dist small{font-size:16px;color:var(--muted)}
+  .stat-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:10px 12px}
+  .stat .s-val{font-family:var(--disp);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+  .stat .s-lbl{font-size:11px;color:var(--muted);margin-top:2px}
+  .banner{font-size:10.5px;line-height:1.5;color:var(--warm);background:var(--warm-soft);border:1px solid #4A3528;border-radius:9px;padding:8px 10px;margin-top:9px}
+  .err{font-size:12px;color:var(--bad);background:#2A1614;border:1px solid #4A2420;border-radius:9px;padding:10px;margin-top:9px;line-height:1.5;display:none}
+</style>
+</head>
+<body>
+<div class="frame">
+  <!-- READY -->
+  <section class="screen active" id="screen-ready">
+    <div class="eyebrow">러닝메이트 · v6</div>
+    <div class="brand">자동 트리거 러닝</div>
+    <div class="banner">v6: 멘트 셔플백(같은 멘트 반복 제거) · 재시작 반응 단축(움직임 포착 후 ~2~3초).</div>
+    <div class="card" style="margin-top:10px">
+      <div class="lbl" style="margin-bottom:8px">메이트 성격</div>
+      <div class="persona-row">
+        <button class="persona-btn sel" data-p="coach" onclick="pickPersona('coach',this)"><span class="pb-emoji">🧘</span>코치형</button>
+        <button class="persona-btn" data-p="friend" onclick="pickPersona('friend',this)"><span class="pb-emoji">🤝</span>친구형</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row"><div class="lbl">목표 거리 <span class="sub">도달 시 자동 종료</span></div>
+        <div class="stepper"><button onclick="bumpGoal(-0.5)">−</button><div class="val" id="goalVal">3.0<small>km</small></div><button onclick="bumpGoal(0.5)">+</button></div></div>
+      <div class="row" style="margin-top:11px"><div class="lbl">목표 페이스</div>
+        <div class="stepper"><button onclick="bumpTarget(10)">−</button><div class="val" id="targetVal">6'00<small>/km</small></div><button onclick="bumpTarget(-10)">+</button></div></div>
+    </div>
+    <div class="card">
+      <div class="lbl" style="margin-bottom:6px">판단 기준 <span class="sub">★코칭을 현재페이스/평균페이스 중 무엇으로 판단</span></div>
+      <div class="seg" id="segBasis"><button data-v="current">현재</button><button class="sel" data-v="blend">혼합(권장)</button><button data-v="avg">평균</button></div>
+      <div class="lbl" style="margin:11px 0 6px">민감도 <span class="sub">3차 고정값: 보통</span></div>
+      <div class="seg" id="segSens"><button data-v="10">민감 ±10</button><button class="sel" data-v="15">보통 ±15</button><button data-v="25">둔감 ±25</button></div>
+      <div class="lbl" style="margin:11px 0 6px">전역 발화 간격 <span class="sub">고정값: 20초</span></div>
+      <div class="seg" id="segGap"><button data-v="12">12초</button><button class="sel" data-v="20">20초</button><button data-v="30">30초</button></div>
+      <div class="lbl" style="margin:11px 0 6px">체크인 간격 <span class="sub">고정값: 75초</span></div>
+      <div class="seg" id="segCheck"><button data-v="45">45초</button><button class="sel" data-v="75">75초</button><button data-v="120">120초</button></div>
+      <div class="lbl" style="margin:11px 0 6px">시작 침묵(워밍업) <span class="sub">고정값: 30초</span></div>
+      <div class="seg" id="segWarm"><button data-v="15">15초</button><button data-v="20">20초</button><button class="sel" data-v="30">30초</button></div>
+    </div>
+    <div class="err" id="errBox"></div>
+    <button class="btn btn-go" onclick="startRun()">러닝 시작</button>
+    <button class="btn btn-ghost" style="margin-top:8px" onclick="startRun(true)">GPS 없이 시뮬레이션</button>
+  </section>
+
+  <!-- RUN -->
+  <section class="screen" id="screen-run">
+    <div class="run-head">
+      <span class="gps bad" id="gpsBadge">GPS 잡는 중…</span>
+      <span class="mute-tog" id="muteTog" onclick="toggleMute()">🔊 음성 켜짐</span>
+    </div>
+    <div class="prog"><div id="progBar"></div></div>
+    <div class="pace-block">
+      <div class="pace-label" id="paceLabel">현재 페이스 (스무딩)</div>
+      <div class="pace-big" id="paceBig">--'--</div>
+      <div class="pace-unit">min / km</div>
+      <div class="debug"><b>원시</b> <span id="rawPace">--'--</span> · <b>정확도</b> <span id="acc">--</span>m · <b id="stTag">워밍업</b> <span id="stLeft"></span> · 오디오 <span class="aok" id="aok">0</span>/<span class="amiss" id="amiss">0</span></div>
+    </div>
+    <div class="metrics">
+      <div class="metric"><div class="m-val" id="mTime">0:00</div><div class="m-lbl">시간</div></div>
+      <div class="metric"><div class="m-val" id="mDist">0.00</div><div class="m-lbl">거리 (km)</div></div>
+      <div class="metric"><div class="m-val" id="mAvg">--'--</div><div class="m-lbl">평균 페이스</div></div>
+    </div>
+    <div class="coach" id="coach">
+      <div class="coach-orb"><div class="mini-wave"><span></span><span></span><span></span><span></span></div></div>
+      <div class="coach-text"><span class="who" id="coachWho">메이트</span><span id="coachLine">GPS를 잡으면 곧 시작할게요.</span></div>
+    </div>
+    <div class="log" id="log"><div class="log-title">발화 로그 (시간 · 간격 · 음원 · 멘트)</div><div id="logBody"></div></div>
+    <div class="runbtns">
+      <button class="btn btn-pause" id="pauseBtn" onclick="togglePause('manual')">⏸ 일시정지</button>
+      <button class="btn btn-end" onclick="endRun()">러닝 종료</button>
+    </div>
+  </section>
+
+  <!-- SUMMARY -->
+  <section class="screen" id="screen-summary">
+    <div class="eyebrow">러닝 리포트</div>
+    <div class="brand">수고했어요</div>
+    <div class="sum-hero"><div class="dist"><span id="sumDist">0.0</span><small> km</small></div></div>
+    <div class="card"><p id="sumNarrative" style="font-size:13px;line-height:1.7;color:#D4D9E4"></p></div>
+    <div class="stat-row">
+      <div class="stat"><div class="s-val" id="sumTime">0:00</div><div class="s-lbl">운동 시간 (정지 제외)</div></div>
+      <div class="stat"><div class="s-val" id="sumPace">--'--</div><div class="s-lbl">평균 페이스</div></div>
+      <div class="stat"><div class="s-val" id="sumSpoken">0</div><div class="s-lbl">발화 횟수</div></div>
+      <div class="stat"><div class="s-val" id="sumPause">0</div><div class="s-lbl">일시정지 (회)</div></div>
+    </div>
+    <button class="btn btn-ghost" style="margin-top:13px" onclick="location.reload()">다시 시작</button>
+  </section>
+</div>
+
+<script>
+/* ===== 음성 파일 설정 ===== */
+const AUDIO_BASE={coach:"coach/",friend:"friend/"};
+const EXT=".mp3";
+const USE_AUDIO=true;
+
+/* ===== 멘트 풀 ({t:텍스트(폴백), f:파일명}) ===== */
+const SIT={
+  run_start:{v:{coach:[{t:"같이 가요. 처음 5분은 몸 푸는 구간이에요. 천천히.",f:"run_start_coach_01"},{t:"오늘도 나왔네요. 무리하지 말고 편하게 시작해요.",f:"run_start_coach_02"},{t:"발끝부터 가볍게. 호흡은 코로 들이쉬고 입으로 내쉬어요.",f:"run_start_coach_03"},{t:"자, 출발해요. 초반은 천천히, 몸이 데워질 때까지.",f:"run_start_coach_04"}],friend:[{t:"자, 가볼까? 처음엔 살살 가자, 같이.",f:"run_start_friend_01"},{t:"왔구나! 천천히 풀면서 가자.",f:"run_start_friend_02"},{t:"출발~ 초반엔 무리 말고 몸부터 데우자.",f:"run_start_friend_03"}]}},
+  too_fast:{cd:30,v:{coach:[{t:"조금 빨라요. 초반엔 힘 아껴둬요.",f:"too_fast_coach_01"},{t:"지금은 천천히 가도 괜찮아요. 숨이 차면 속도를 줄여요.",f:"too_fast_coach_02"},{t:"마음은 알겠지만, 반 박자만 늦춰볼까요?",f:"too_fast_coach_03"},{t:"페이스가 목표보다 빨라요. 후반을 위해 아껴요.",f:"too_fast_coach_04"},{t:"살짝 오버페이스예요. 호흡이 가빠지기 전에 늦춰요.",f:"too_fast_coach_05"}],friend:[{t:"야 너무 빨라~ 좀 아껴, 같이 가자.",f:"too_fast_friend_01"},{t:"숨차겠다, 살짝 늦추자.",f:"too_fast_friend_02"},{t:"초반부터 너무 달린다? 반 박자 줄이자.",f:"too_fast_friend_03"},{t:"천천히, 후반에 쓸 힘 남겨두자.",f:"too_fast_friend_04"}]}},
+  too_slow:{cd:30,v:{coach:[{t:"여유 있어 보여요. 호흡 되찾으면 살짝 올려봐요.",f:"too_slow_coach_01"},{t:"반 박자만 올려볼까요? 무리는 말고.",f:"too_slow_coach_02"},{t:"조금 처졌어요. 준비되면 다시 리듬 잡아요.",f:"too_slow_coach_03"},{t:"괜찮아요, 지칠 땐 천천히. 회복되면 올려요.",f:"too_slow_coach_04"},{t:"페이스가 떨어졌어요. 팔을 조금 더 흔들어 볼까요?",f:"too_slow_coach_05"}],friend:[{t:"조금만 더 내보자~ 너 더 할 수 있어.",f:"too_slow_friend_01"},{t:"여유 있어 보이는데? 반 박자 올리자.",f:"too_slow_friend_02"},{t:"살짝 처졌어, 팔 흔들면서 올려보자.",f:"too_slow_friend_03"},{t:"자, 다시 힘내자, 같이 가자!",f:"too_slow_friend_04"}]}},
+  pace_recovered:{cd:40,v:{coach:[{t:"좋아요, 다시 페이스 찾았어요.",f:"pace_recovered_coach_01"},{t:"잘 돌아왔어요. 이 리듬 유지해요.",f:"pace_recovered_coach_02"},{t:"페이스 안정됐어요. 그대로 가요.",f:"pace_recovered_coach_03"}],friend:[{t:"오 다시 페이스 찾았다, 좋아!",f:"pace_recovered_friend_01"},{t:"잘 돌아왔어, 그대로 가자.",f:"pace_recovered_friend_02"},{t:"그래 이거지, 이대로 쭉!",f:"pace_recovered_friend_03"}]}},
+  on_target:{cd:70,v:{coach:[{t:"좋아요, 딱 이 리듬 그대로 가요.",f:"on_target_coach_01"},{t:"안정적이에요. 지금 페이스 기억해두세요.",f:"on_target_coach_02"},{t:"호흡과 발이 잘 맞아요. 이대로.",f:"on_target_coach_03"},{t:"목표 페이스 정확해요. 완벽한 흐름이에요.",f:"on_target_coach_04"},{t:"이 속도가 오늘 당신의 리듬이에요. 유지해요.",f:"on_target_coach_05"},{t:"페이스 안정적이에요. 몸이 잘 적응했어요.",f:"on_target_coach_06"}],friend:[{t:"오 좋아 좋아, 이대로 가자.",f:"on_target_friend_01"},{t:"리듬 탔다! 그대로 유지~",f:"on_target_friend_02"},{t:"페이스 딱이야, 그대로 가면 돼.",f:"on_target_friend_03"},{t:"완벽해, 이게 네 속도야.",f:"on_target_friend_04"}]}},
+  checkin:{cd:0,v:{coach:[{t:"잘하고 있어요. 어깨 힘 빼고, 시선은 앞으로.",f:"checkin_coach_01"},{t:"손은 가볍게 쥐고, 호흡은 일정하게 가요.",f:"checkin_coach_02"},{t:"페이스 좋아요. 이대로 가볍게 이어가요.",f:"checkin_coach_03"},{t:"발소리 일정해요. 리듬 잘 타고 있어요.",f:"checkin_coach_04"},{t:"호흡 한 번 길게 내쉬어 볼까요. 좋아요.",f:"checkin_coach_05"},{t:"지금 흐름 편안해 보여요. 그대로 즐겨요.",f:"checkin_coach_06"},{t:"턱은 당기고, 팔은 자연스럽게 흔들어요.",f:"checkin_coach_07"},{t:"무리하지 말고 이 느낌 그대로 가요.",f:"checkin_coach_08"}],friend:[{t:"잘 가고 있어~ 어깨 힘 빼고!",f:"checkin_friend_01"},{t:"좋아 좋아, 그 느낌 그대로.",f:"checkin_friend_02"},{t:"호흡 한 번 길게 내쉬자, 편하게.",f:"checkin_friend_03"},{t:"발 잘 구르고 있어, 리듬 탔다.",f:"checkin_friend_04"},{t:"무리하지 말고 딱 이대로 가자.",f:"checkin_friend_05"}]}},
+  halfway:{cd:0,v:{coach:[{t:"절반 왔어요. 호흡 한 번 고르고 후반 준비해요.",f:"halfway_coach_01"}],friend:[{t:"절반 왔다! 호흡 고르고 후반 가자.",f:"halfway_friend_01"}]}},
+  final_push:{cd:0,v:{coach:[{t:"거의 다 왔어요. 마지막 힘내요.",f:"final_push_coach_01"},{t:"여기까지 잘 왔어요. 끝까지 같이 가요.",f:"final_push_coach_02"}],friend:[{t:"거의 다 왔어! 조금만 더, 할 수 있어!",f:"final_push_friend_01"},{t:"끝이 보인다! 같이 끝내자!",f:"final_push_friend_02"}]}},
+  /* ★ v4 신규: 일시정지/재시작/완주 (음원 미생성 → TTS 폴백, 추후 합성) */
+  paused:{cd:0,v:{coach:[{t:"지금 타이밍에 잠시 재정비해요.",f:"paused_coach_01"},{t:"신발끈 풀렸는지 한번 확인해요.",f:"paused_coach_02"},{t:"발목 돌리고, 종아리 한번 풀어줘요.",f:"paused_coach_03"}],friend:[{t:"잠깐 쉬자, 재정비 한번.",f:"paused_friend_01"},{t:"신발끈 한번 확인하고~",f:"paused_friend_02"},{t:"발목 종아리 살짝 풀자.",f:"paused_friend_03"}]}},
+  resume:{cd:0,v:{coach:[{t:"다시 가볼까요. 천천히 출발해요.",f:"resume_coach_01"},{t:"좋아요, 다시 출발. 페이스 서서히 올려요.",f:"resume_coach_02"}],friend:[{t:"자, 다시 가자!",f:"resume_friend_01"},{t:"좋아 다시 출발하자~",f:"resume_friend_02"}]}},
+  goal:{cd:0,v:{coach:[{t:"목표 거리 완주! 오늘도 끝까지 잘 해냈어요.",f:"goal_coach_01"}],friend:[{t:"목표 완주! 진짜 잘했어, 고생했어!",f:"goal_friend_01"}]}}
+};
+const PV={coach:{rate:0.97,pitch:1.0},friend:{rate:1.05,pitch:1.12}};
+
+/* ===== 설정값 (3차 고정 기본값) ===== */
+let persona="coach", goalKm=3.0, targetSec=360, sensSec=15, globalGap=20, checkinSec=75, warmupSec=30;
+let judgeBasis="blend"; // 현재/평균/혼합 — 기본 혼합(현재로 반응, 평균과 충돌 시 코칭 보류)
+const PAUSE_SPEED=0.6, PAUSE_SEC=12;    // 이 속도 미만이 PAUSE_SEC 지속 시 자동 일시정지 (걷기 오작동 방지)
+const RESUME_SPEED=1.0, RESUME_SEC=2;   // 재시작: 1.0m/s가 2초 지속되면(움직임 포착 후 ~2~3초내 재시작, 단발 흔들림은 제외)
+
+/* ===== 런타임 ===== */
+let muted=false, simMode=false, watchId=null, tickTimer=null, wakeLock=null, isSpeaking=false;
+let lastPos=null, paceBuf=[], dist=0, startT=0;
+let lastSpeakAt=-999, spokenCount=0, aOK=0, aMiss=0;
+let lastSit={}, lastIdx={}, lastMilestone=0, smoothedPace=null, avgPace=null;
+let wasDeviated=false, firedHalfway=false, firedFinal=false, goalReached=false, recentDev=[], curAudio=null, lastSrc="";
+/* 일시정지 상태 */
+let paused=false, pauseStartMs=0, pausedAccumMs=0, pauseCount=0, pausedMantraAt=0;
+let lastAbovePauseMs=0, moveStreakStart=0;
+
+/* ===== 유틸 ===== */
+function mmss(s){if(s==null||!isFinite(s))return "--'--";const m=Math.floor(s/60),x=Math.round(s%60);return m+"'"+String(x).padStart(2,'0');}
+function clock(s){const m=Math.floor(s/60),x=Math.floor(s%60);return m+":"+String(x).padStart(2,'0');}
+function median(a){const s=[...a].sort((x,y)=>x-y),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active');}
+function haversine(a,b,c,d){const R=6371000,r=x=>x*Math.PI/180,dLat=r(c-a),dLon=r(d-b);const h=Math.sin(dLat/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(dLon/2)**2;return R*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}
+/* 경과시간: 일시정지 시간은 제외 */
+function elapsed(){const ongoing=paused?(Date.now()-pauseStartMs):0;return (Date.now()-startT-pausedAccumMs-ongoing)/1000;}
+
+/* ===== 설정 UI ===== */
+function pickPersona(p,el){persona=p;document.querySelectorAll('.persona-btn').forEach(b=>b.classList.remove('sel'));el.classList.add('sel');}
+function bumpGoal(d){goalKm=Math.max(1,Math.min(15,Math.round((goalKm+d)*2)/2));document.getElementById('goalVal').innerHTML=goalKm.toFixed(1)+"<small>km</small>";}
+function bumpTarget(d){targetSec=Math.max(180,Math.min(600,targetSec+d));const m=Math.floor(targetSec/60),s=targetSec%60;document.getElementById('targetVal').innerHTML=m+"'"+String(s).padStart(2,'0')+"<small>/km</small>";}
+function segWire(id,set){document.getElementById(id).addEventListener('click',e=>{if(e.target.dataset.v!==undefined){set(e.target.dataset.v);document.querySelectorAll('#'+id+' button').forEach(b=>b.classList.remove('sel'));e.target.classList.add('sel');}});}
+segWire('segBasis',v=>{judgeBasis=v;});
+segWire('segSens',v=>sensSec=+v);segWire('segGap',v=>globalGap=+v);segWire('segCheck',v=>checkinSec=+v);segWire('segWarm',v=>warmupSec=+v);
+function toggleMute(){muted=!muted;document.getElementById('muteTog').textContent=muted?"🔇 음성 꺼짐":"🔊 음성 켜짐";if(muted){try{speechSynthesis.cancel();}catch(e){}if(curAudio)try{curAudio.pause();}catch(e){}}}
+
+/* ===== TTS ===== */
+let koVoice=null;
+function loadVoice(){const vs=speechSynthesis.getVoices();koVoice=vs.find(v=>v.lang==="ko-KR")||vs.find(v=>v.lang&&v.lang.toLowerCase().startsWith("ko"))||null;}
+if("speechSynthesis" in window){loadVoice();speechSynthesis.onvoiceschanged=loadVoice;}
+
+/* ===== 발화: 클로바 우선, 없으면 TTS ===== */
+function speak(text,file){
+  const c=document.getElementById('coach');
+  isSpeaking=true;c.classList.add('speaking');
+  let ended=false;const done=()=>{if(ended)return;ended=true;isSpeaking=false;c.classList.remove('speaking');};
+  if(muted){lastSrc="mute";setTimeout(done,900);return;}
+  if(USE_AUDIO&&file){
+    let settled=false;
+    const a=new Audio(AUDIO_BASE[persona]+file+EXT);curAudio=a;
+    const fall=()=>{if(settled)return;settled=true;aMiss++;updateAudioStat();lastSrc="tts";ttsFallback(text,done);};
+    a.onended=()=>{if(!settled){settled=true;done();}};
+    a.onerror=fall;
+    a.play().then(()=>{if(!settled){aOK++;updateAudioStat();lastSrc="clova";}}).catch(fall);
+    setTimeout(()=>{if(!ended&&!speechSynthesis.speaking&&(!curAudio||curAudio.ended||curAudio.paused))done();},10000); // ★안전장치: isSpeaking 멈춤 방지
+    return;
+  }
+  lastSrc="tts";ttsFallback(text,done);
+}
+function ttsFallback(text,done){
+  if(!("speechSynthesis" in window)){setTimeout(done,1400);return;}
+  try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang="ko-KR";if(koVoice)u.voice=koVoice;const pv=PV[persona];u.rate=pv.rate;u.pitch=pv.pitch;u.onend=done;u.onerror=done;speechSynthesis.speak(u);setTimeout(()=>{if(isSpeaking&&!speechSynthesis.speaking)done();},8000);}catch(e){setTimeout(done,1400);}
+}
+function updateAudioStat(){document.getElementById('aok').textContent=aOK;document.getElementById('amiss').textContent=aMiss;}
+
+/* ===== 발화 헬퍼 ===== */
+function fireDirect(sit,text,file){
+  const d=SIT[sit],t=elapsed();
+  if(d&&d.cd&&t-(lastSit[sit]||-9999)<d.cd)return false;
+  const gap=(lastSpeakAt<0)?0:Math.round(t-lastSpeakAt);
+  lastSit[sit]=t;lastSpeakAt=t;spokenCount++;
+  document.getElementById('coachWho').textContent="메이트 · "+(persona==="coach"?"코치":"친구");
+  document.getElementById('coachLine').textContent=text;
+  speak(text,file);
+  setTimeout(()=>addLog(clock(t),gap),60);
+  return true;
+}
+/* 셔플백: 한 상황×페르소나의 모든 변형을 다 쓰기 전엔 같은 멘트 반복 안 함 */
+let bags={};
+function pickIndex(key,n){
+  if(n<=1)return 0;
+  if(!bags[key]||bags[key].length===0){
+    let arr=[...Array(n).keys()];
+    for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
+    if(arr[0]===lastIdx[key]&&arr.length>1){[arr[0],arr[1]]=[arr[1],arr[0]];} // 백 경계에서도 직전과 안 겹치게
+    bags[key]=arr;
+  }
+  const idx=bags[key].shift();lastIdx[key]=idx;return idx;
+}
+function firePool(sit){const d=SIT[sit];let pool=d.v[persona]||d.v.coach;const key=sit+"_"+persona;const v=pool[pickIndex(key,pool.length)];return fireDirect(sit,v.t,v.f);}
+function addLog(t,gap){const b=document.getElementById('logBody');const cls=lastSrc==="clova"?"f-ok":lastSrc==="pz"?"f-pz":"f-miss";const lab=lastSrc==="clova"?"클로바":lastSrc==="mute"?"음소거":"TTS";const el=document.createElement('div');el.className='log-item';el.innerHTML='<span class="t">'+t+'</span><span class="gap">+'+gap+'s</span><span class="src '+cls+'">'+lab+'</span><span>'+document.getElementById('coachLine').textContent+'</span>';b.insertBefore(el,b.firstChild);}
+
+/* ===== 코칭 엔진 ===== */
+function evaluate(){
+  const t=elapsed();
+  if(t<warmupSec)return;        // ① 시작 워밍업
+  if(isSpeaking)return;         // ② 발화 중 금지
+  if(t-lastSpeakAt<globalGap)return; // ③ 전역 최소 간격
+
+  // ④ 거리 이벤트 (우선순위 상단) — 반환점·막바지 수정 포함
+  const km=Math.floor(dist/1000);
+  if(km>=1&&km>lastMilestone&&km<goalKm){lastMilestone=km;if(fireDirect('milestone',km+"킬로미터 통과. 잘 가고 있어요.","milestone_"+persona+"_"+km+"km"))return;}
+  if(!firedHalfway&&dist>=goalKm*1000*0.5){firedHalfway=true;if(firePool('halfway'))return;}
+  if(!firedFinal&&dist>=goalKm*1000*0.9){firedFinal=true;if(firePool('final_push'))return;} // 막바지: 목표의 90% 지점
+
+  // ⑤ 페이스 판단 — 현재 / 평균 / 혼합
+  let dev=null;
+  if(judgeBasis==="avg"){ if(avgPace!=null) dev=avgPace-targetSec; }
+  else if(judgeBasis==="current"){ if(smoothedPace!=null) dev=smoothedPace-targetSec; }
+  else { // 혼합: 현재로 반응하되, 평균과 방향이 충돌하면(보정 중) 코칭 보류
+    if(smoothedPace!=null){
+      const dc=smoothedPace-targetSec, da=(avgPace!=null?avgPace-targetSec:dc);
+      dev = (Math.sign(dc)!==Math.sign(da) && Math.abs(dc)>sensSec && Math.abs(da)>sensSec) ? 0 : dc;
+    }
+  }
+  if(dev!=null){
+    recentDev.push(dev);if(recentDev.length>3)recentDev.shift();
+    const sustained=recentDev.length>=2&&recentDev.every(x=>Math.abs(x)>sensSec&&Math.sign(x)===Math.sign(dev));
+    if(sustained){wasDeviated=true;if(firePool(dev<0?'too_fast':'too_slow')){recentDev=[];return;}}
+    if(wasDeviated&&Math.abs(dev)<=sensSec){wasDeviated=false;if(firePool('pace_recovered'))return;}
+    if(Math.abs(dev)<=sensSec&&(t-lastSpeakAt)>checkinSec*0.8){if(firePool('on_target'))return;}
+  }
+  // ⑥ 체크인 (최하위)
+  if(t-lastSpeakAt>checkinSec){firePool('checkin');}
+}
+
+/* 진행 중 발화를 깔끔히 끊는다 (간섭 방지) */
+function stopSpeaking(){try{speechSynthesis.cancel();}catch(e){}if(curAudio){try{curAudio.pause();}catch(e){}}isSpeaking=false;document.getElementById('coach').classList.remove('speaking');}
+
+/* ===== 일시정지 / 재시작 ===== */
+function enterPause(reason){
+  if(paused||goalReached)return;
+  paused=true;pauseStartMs=Date.now();pauseCount++;pausedMantraAt=Date.now();moveStreakStart=0;
+  const b=document.getElementById('gpsBadge');b.className="gps pause";b.textContent=(reason==="auto"?"자동 ":"")+"일시정지";
+  document.getElementById('paceBig').classList.add('paused');
+  document.getElementById('coach').classList.add('paused');
+  document.getElementById('pauseBtn').textContent="▶ 재개";
+  stopSpeaking();                              // ★ 진행 중 멘트 중단
+  setTimeout(()=>{if(paused)firePoolPaused('paused');},300); // 텀 두고 재정비 멘트
+}
+function exitPause(reason){
+  if(!paused)return;
+  pausedAccumMs+=Date.now()-pauseStartMs;paused=false;lastAbovePauseMs=Date.now();moveStreakStart=0;
+  const b=document.getElementById('gpsBadge');b.className="gps ok";b.textContent=simMode?"시뮬레이션":"GPS 보통";
+  document.getElementById('paceBig').classList.remove('paused');
+  document.getElementById('coach').classList.remove('paused');
+  document.getElementById('pauseBtn').textContent="⏸ 일시정지";
+  stopSpeaking();                              // ★ 재정비 멘트 끊고
+  setTimeout(()=>{if(!paused)firePool('resume');},300); // 텀 두고 재시작 멘트
+}
+function togglePause(reason){ paused?exitPause(reason):enterPause(reason); }
+/* 일시정지 멘트는 게이팅 무시하고 직접 재생 */
+function firePoolPaused(sit){const d=SIT[sit];let pool=d.v[persona]||d.v.coach;const key=sit+"_"+persona;const v=pool[pickIndex(key,pool.length)];lastSit[sit]=elapsed();lastSpeakAt=elapsed();document.getElementById('coachWho').textContent="메이트 · "+(persona==="coach"?"코치":"친구");document.getElementById('coachLine').textContent=v.t;lastSrc="pz";speak(v.t,v.f);setTimeout(()=>addLog(clock(elapsed()),0),60);}
+
+/* ===== GPS ===== */
+function onPos(p){
+  const acc=p.coords.accuracy;document.getElementById('acc').textContent=Math.round(acc);
+  if(!paused){const badge=document.getElementById('gpsBadge');if(acc<=12){badge.className="gps good";badge.textContent="GPS 양호";}else if(acc<=25){badge.className="gps ok";badge.textContent="GPS 보통";}else{badge.className="gps bad";badge.textContent="GPS 약함";}}
+  if(acc>30){lastPos={lat:p.coords.latitude,lon:p.coords.longitude,t:p.timestamp};return;}
+  const cur={lat:p.coords.latitude,lon:p.coords.longitude,t:p.timestamp};
+  if(lastPos){
+    const d=haversine(lastPos.lat,lastPos.lon,cur.lat,cur.lon),dt=(cur.t-lastPos.t)/1000;
+    if(dt>0.3){
+      const spd=d/dt, now=Date.now();
+      if(spd>PAUSE_SPEED) lastAbovePauseMs=now;                    // 이 속도 넘으면 '정지 아님'으로 갱신 → 걷기는 일시정지 안 됨
+      if(spd>=RESUME_SPEED){ if(!moveStreakStart) moveStreakStart=now; } else { moveStreakStart=0; } // 빠른 이동 연속 추적
+      if(paused){
+        if(moveStreakStart && now-moveStreakStart>=RESUME_SEC*1000) exitPause('auto'); // 충분히 지속 이동해야 재시작(예민 방지)
+      } else if(spd>0.6&&spd<6.5){
+        dist+=d;const pace=1000/spd;paceBuf.push(pace);if(paceBuf.length>5)paceBuf.shift();smoothedPace=median(paceBuf);
+        document.getElementById('paceBig').textContent=mmss(smoothedPace);document.getElementById('rawPace').textContent=mmss(pace);
+      }
+    }
+  }
+  lastPos=cur;
+}
+function onErr(){const box=document.getElementById('errBox');box.style.display='block';box.textContent="위치 권한 + HTTPS 주소(GitHub Pages 등)가 필요해요. 우선 '시뮬레이션'으로 확인하세요.";}
+
+/* ===== 시작/종료 ===== */
+async function startRun(sim){
+  simMode=!!sim;
+  if("speechSynthesis" in window){try{speechSynthesis.resume();const w=new SpeechSynthesisUtterance(" ");w.volume=0;speechSynthesis.speak(w);}catch(e){}}
+  try{if('wakeLock' in navigator)wakeLock=await navigator.wakeLock.request('screen');}catch(e){}
+  startT=Date.now();lastSpeakAt=-999;lastAbovePauseMs=Date.now();
+  document.getElementById('paceLabel').textContent=judgeBasis==="avg"?"평균 페이스 기준 판단":judgeBasis==="blend"?"현재+평균 혼합 판단":"현재 페이스 (스무딩)";
+  show('screen-run');
+  firePool('run_start');
+  if(simMode){startSim();}else{if(!('geolocation' in navigator)){onErr();return;}watchId=navigator.geolocation.watchPosition(onPos,onErr,{enableHighAccuracy:true,maximumAge:1000,timeout:8000});}
+  tickTimer=setInterval(tick,3000);
+}
+function tick(){
+  updateMetrics();
+  if(goalReached)return;
+  // 목표 도달 → 완주 멘트 후 자동 종료
+  if(dist>=goalKm*1000){goalReached=true;fireDirect('goal','목표 '+goalKm.toFixed(1)+'킬로미터 완주! 오늘도 끝까지 잘 해냈어요.','goal_'+persona+'_01');setTimeout(endRun,4500);return;}
+  if(paused){ if(!isSpeaking && Date.now()-pausedMantraAt>50000){pausedMantraAt=Date.now();firePoolPaused('paused');} return; }
+  // 자동 일시정지 (GPS 모드 한정) — PAUSE_SPEED 미만이 PAUSE_SEC 지속 시
+  if(!simMode&&elapsed()>warmupSec&&lastAbovePauseMs&&Date.now()-lastAbovePauseMs>PAUSE_SEC*1000){enterPause('auto');return;}
+  evaluate();
+}
+function updateMetrics(){
+  const t=elapsed();
+  document.getElementById('mTime').textContent=clock(t);
+  document.getElementById('mDist').textContent=(dist/1000).toFixed(2);
+  avgPace=dist>30?(t/(dist/1000)):null;
+  document.getElementById('mAvg').textContent=mmss(avgPace);
+  document.getElementById('progBar').style.width=Math.min(100,(dist/1000/goalKm)*100)+"%";
+  const w=warmupSec-t;document.getElementById('stTag').textContent=paused?"일시정지":(w>0?"워밍업":"발화간격");document.getElementById('stLeft').textContent=paused?"":(w>0?(Math.ceil(w)+"초"):(globalGap+"초↑"));
+}
+let simP=362,simStops=0;
+function startSim(){
+  document.getElementById('gpsBadge').className="gps ok";document.getElementById('gpsBadge').textContent="시뮬레이션";
+  setInterval(()=>{
+    if(paused)return; // 시뮬에서도 일시정지 중엔 거리/페이스 정지
+    let raw=simP+(Math.random()-0.5)*10;if(Math.random()<0.12)raw=simP-120;
+    simP+=(360+Math.sin(Date.now()/15000)*40-simP)*0.05;
+    const spd=1000/Math.max(180,raw);dist+=spd*1.0;
+    paceBuf.push(1000/spd);if(paceBuf.length>5)paceBuf.shift();smoothedPace=median(paceBuf);
+    document.getElementById('paceBig').textContent=mmss(smoothedPace);document.getElementById('rawPace').textContent=mmss(1000/spd);document.getElementById('acc').textContent="—";
+  },1000);
+}
+function endRun(){
+  if(watchId!=null)navigator.geolocation.clearWatch(watchId);
+  if(tickTimer)clearInterval(tickTimer);
+  try{speechSynthesis.cancel();}catch(e){}try{if(wakeLock)wakeLock.release();}catch(e){}if(curAudio)try{curAudio.pause();}catch(e){}
+  if(paused){pausedAccumMs+=Date.now()-pauseStartMs;paused=false;}
+  const t=elapsed(),km=dist/1000,avg=km>0.03?t/km:null;
+  document.getElementById('sumDist').textContent=km.toFixed(1);
+  document.getElementById('sumTime').textContent=clock(t);
+  document.getElementById('sumPace').textContent=mmss(avg);
+  document.getElementById('sumSpoken').textContent=spokenCount;
+  document.getElementById('sumPause').textContent=pauseCount;
+  let s=`목표 ${goalKm.toFixed(1)}km 중 ${km.toFixed(1)}km를 운동시간 ${clock(t)}에 달렸어요. `;
+  s+= goalReached ? "목표 거리를 완주했어요! " : "";
+  s+= pauseCount>0 ? `중간에 ${pauseCount}번 멈췄고, 정지 시간은 기록에서 제외했어요. ` : "";
+  s+="수고했어요.";
+  document.getElementById('sumNarrative').textContent=s;
+  show('screen-summary');
+}
+</script>
+</body>
+</html>

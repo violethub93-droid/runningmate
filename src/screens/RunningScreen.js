@@ -176,11 +176,12 @@ export default function RunningScreen({ route, navigation }) {
     if (prev) {
       const d = haversineKm(prev.coords, loc.coords);
       if (d > 0.003) {
-        setDistanceKm((km) => {
-          const newKm = km + d;
-          distanceKmRef.current = newKm;
-          return newKm;
-        });
+        const newKm = distanceKmRef.current + d;
+        distanceKmRef.current = newKm;
+        setDistanceKm(newKm);
+        // v8: 거리 이벤트(마일스톤/반환점/막바지/완주)는 5초 코칭 루프를 기다리지 않고
+        // GPS 갱신마다 즉시 검사해 타이밍 지연을 없앤다
+        engineRef.current?.checkDistanceEvents({ distanceKm: newKm });
       }
       if (speed > 0.5) {
         const paceSec = Math.min(Math.round(1000 / speed), 900);

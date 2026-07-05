@@ -110,7 +110,7 @@ export const SITUATIONS = {
     },
     audioKeys: {
       coach: ['idle_checkin_coach_01', 'idle_checkin_coach_02', 'idle_checkin_coach_03'],
-      friend: ['idle_checkin_coach_01'],
+      friend: ['idle_checkin_friend_01'],
     },
   },
   final_push: {
@@ -199,6 +199,8 @@ export const MILESTONES = {
       3: '3킬로미터 지났어요. 페이스 좋아요.',
       4: '4킬로미터 통과. 잘 가고 있어요.',
       5: '5킬로미터 통과. 페이스 좋아요.',
+      6: '6킬로미터 통과. 잘 가고 있어요.',
+      7: '7킬로미터 통과. 페이스 좋아요.',
     },
     friend: {
       1: '1킬로! 잘하고 있어, 계속 가자.',
@@ -206,6 +208,8 @@ export const MILESTONES = {
       3: '3킬로! 잘하고 있어.',
       4: '4킬로! 거의 다 왔어.',
       5: '5킬로! 다 왔어!',
+      6: '6킬로! 계속 가자.',
+      7: '7킬로! 잘하고 있어.',
     },
   },
   audioKeys: {
@@ -215,6 +219,8 @@ export const MILESTONES = {
       3: 'milestone_coach_3km',
       4: 'milestone_coach_4km',
       5: 'milestone_coach_5km',
+      6: 'milestone_coach_6km',
+      7: 'milestone_coach_7km',
     },
     friend: {
       1: 'milestone_friend_1km',
@@ -222,9 +228,18 @@ export const MILESTONES = {
       3: 'milestone_friend_3km',
       4: 'milestone_friend_4km',
       5: 'milestone_friend_5km',
+      6: 'milestone_friend_6km',
+      7: 'milestone_friend_7km',
     },
   },
 };
+
+// 8km 이상 등 큐레이션된 데이터가 없는 지점을 위한 일반화된 마일스톤 텍스트(TTS 폴백 전용)
+export function milestoneFallbackText(persona, km) {
+  return persona === 'friend'
+    ? `${km}킬로! 잘하고 있어, 계속 가자.`
+    : `${km}킬로미터 통과. 잘 가고 있어요.`;
+}
 
 // 페이스 임계값 (초/km)
 export const PACE_THRESHOLDS = {

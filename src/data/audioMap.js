@@ -50,6 +50,12 @@ const audioMap = {
   idle_checkin_coach_03: require('../../assets/audio/idle_checkin_coach_03.mp3'),
   idle_checkin_friend_01: require('../../assets/audio/idle_checkin_friend_01.mp3'),
 
+  // ── 반환점 (4개 적용) ────────────────────────────────────
+  halfway_coach_01: require('../../assets/audio/halfway_coach_01.mp3'),
+  halfway_coach_02: require('../../assets/audio/halfway_coach_02.mp3'),
+  halfway_friend_01: require('../../assets/audio/halfway_friend_01.mp3'),
+  halfway_friend_02: require('../../assets/audio/halfway_friend_02.mp3'),
+
   // ── 막바지 (4개 적용) ────────────────────────────────────
   final_push_coach_01: require('../../assets/audio/final_push_coach_01.mp3'),
   final_push_coach_02: require('../../assets/audio/final_push_coach_02.mp3'),

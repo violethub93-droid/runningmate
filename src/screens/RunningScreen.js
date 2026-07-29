@@ -7,7 +7,12 @@ import * as Location from 'expo-location';
 import { Accelerometer } from 'expo-sensors';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { CoachingEngine } from '../engine/CoachingEngine';
+import {
+  createRunLog, addSample, addSpeech, openPause, closePause,
+  finalizeRunLog, saveRun,
+} from '../data/runLog';
 
+const SAMPLE_EVERY_SEC = 3;         // 러닝 로그 페이스/케이던스 샘플 주기
 const COACHING_INTERVAL_MS = 5000;
 const GPS_UPDATE_MS = 2000;
 const AUTO_PAUSE_SPEED_MPS = 0.3;   // 이 속도 이하 3연속 → 자동 일시정지
@@ -43,6 +48,11 @@ export default function RunningScreen({ route, navigation }) {
   const accelSubscriptionRef = useRef(null);
   const prevLocationRef = useRef(null);
   const accelWindowRef = useRef([]);
+
+  // 러닝 로그 — 발화 타이밍·페이스 궤적·정지 구간을 기록해 현장 테스트 후 분석한다
+  const runLogRef = useRef(null);
+  const gpsAccuracyRef = useRef(null);
+  const pauseStartMsRef = useRef(0);
 
   // 시작/재개 연타 시 GPS·가속도 구독이 중복 생성되는 것을 막는 락
   const transitionLockRef = useRef(false);
@@ -110,12 +120,36 @@ export default function RunningScreen({ route, navigation }) {
     }
   }, []);
 
+  // 정지 구간 기록 — 자동↔수동 전환으로 구간이 겹쳐도 열린 구간을 먼저 닫는다
+  const endPauseLog = () => {
+    if (!pauseStartMsRef.current) return;
+    closePause(runLogRef.current, { durSec: (Date.now() - pauseStartMsRef.current) / 1000 });
+    pauseStartMsRef.current = 0;
+  };
+
+  const beginPauseLog = (reason) => {
+    endPauseLog();
+    pauseStartMsRef.current = Date.now();
+    openPause(runLogRef.current, { t: elapsedSecRef.current, reason });
+  };
+
   const startTimer = () => {
     if (timerRef.current) return;
     timerRef.current = setInterval(() => {
       setElapsedSec((s) => {
-        elapsedSecRef.current = s + 1;
-        return s + 1;
+        const next = s + 1;
+        elapsedSecRef.current = next;
+        if (next % SAMPLE_EVERY_SEC === 0) {
+          addSample(runLogRef.current, {
+            t: next,
+            distanceKm: distanceKmRef.current,
+            paceSec: currentPaceRef.current,
+            cadenceSpm: cadenceSpmRef.current,
+            accuracyM: gpsAccuracyRef.current,
+            paused: false,
+          });
+        }
+        return next;
       });
     }, 1000);
   };
@@ -142,6 +176,7 @@ export default function RunningScreen({ route, navigation }) {
   // GPS 콜백 — auto-pause/resume 포함. isPaused(수동)와 별개로 동작.
   const makeGpsCallback = () => (loc) => {
     const speed = loc.coords.speed;
+    gpsAccuracyRef.current = loc.coords.accuracy;
 
     // 자동 일시정지/재시작 감지 — speed를 못 받는 기기/순간엔 판단을 건너뜀
     if (speed != null) {
@@ -151,6 +186,7 @@ export default function RunningScreen({ route, navigation }) {
           isAutoPausedRef.current = true;
           setIsAutoPaused(true);
           stopTimer();
+          beginPauseLog('auto');
           engineRef.current?.sayPaused();
         }
       } else {
@@ -159,6 +195,7 @@ export default function RunningScreen({ route, navigation }) {
           setIsAutoPaused(false);
           slowReadingsRef.current = 0;
           startTimer();
+          endPauseLog();
           engineRef.current?.sayResume();
         } else if (!isAutoPausedRef.current) {
           slowReadingsRef.current = 0;
@@ -209,11 +246,15 @@ export default function RunningScreen({ route, navigation }) {
       slowReadingsRef.current = 0;
       activateKeepAwakeAsync();
 
+      runLogRef.current = createRunLog({ persona, targetPaceSec, targetDistanceKm });
+
       engineRef.current = new CoachingEngine({
         persona,
         targetPaceSec,
         targetDistanceKm,
         onGoalReached: () => finishRunRef.current?.(),
+        onSpeak: ({ sit, text, src }) =>
+          addSpeech(runLogRef.current, { t: elapsedSecRef.current, sit, text, src }),
       });
       await engineRef.current.sayStart();
 
@@ -245,6 +286,7 @@ export default function RunningScreen({ route, navigation }) {
     setIsAutoPaused(false);
     slowReadingsRef.current = 0;
     stopTimer();
+    beginPauseLog('manual');
     stopCoachingLoop();
     locationSubscriptionRef.current?.remove();
     accelSubscriptionRef.current?.remove();
@@ -260,6 +302,7 @@ export default function RunningScreen({ route, navigation }) {
       slowReadingsRef.current = 0;
 
       startTimer();
+      endPauseLog();
 
       locationSubscriptionRef.current = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS, distanceInterval: 5 },
@@ -278,19 +321,32 @@ export default function RunningScreen({ route, navigation }) {
     stopCoachingLoop();
     locationSubscriptionRef.current?.remove();
     accelSubscriptionRef.current?.remove();
+    const goalReached = !!engineRef.current?.goalReached;
     await engineRef.current?.destroy();
     deactivateKeepAwake();
     Vibration.vibrate(200);
 
     const elapsed = elapsedSecRef.current;
     const dist = distanceKmRef.current;
+    const avgPaceSec = elapsed > 0 && dist > 0 ? Math.round(elapsed / dist) : 0;
+
+    endPauseLog();
+    const log = finalizeRunLog(runLogRef.current, {
+      elapsedSec: elapsed,
+      distanceKm: dist,
+      avgPaceSec,
+      goalReached,
+    });
+    if (log) await saveRun(log);
+
     navigation.replace('Summary', {
       elapsedSec: elapsed,
       distanceKm: dist,
-      avgPaceSec: elapsed > 0 && dist > 0 ? Math.round(elapsed / dist) : 0,
+      avgPaceSec,
       persona,
       targetPaceSec,
       targetDistanceKm,
+      runLog: log,
     });
   }, [navigation, persona, targetPaceSec, targetDistanceKm]);
 

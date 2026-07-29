@@ -1,11 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   SafeAreaView, StatusBar, ScrollView,
 } from 'react-native';
+import { exportRun } from '../data/runLog';
 
 export default function SummaryScreen({ route, navigation }) {
-  const { elapsedSec, distanceKm, avgPaceSec, persona, targetPaceSec, targetDistanceKm } = route.params;
+  const { elapsedSec, distanceKm, avgPaceSec, persona, targetPaceSec, targetDistanceKm, runLog } = route.params;
+  const [exportMsg, setExportMsg] = useState(null);
+
+  const handleExport = async () => {
+    if (!runLog) return;
+    const { ok } = await exportRun(runLog);
+    setExportMsg(ok ? '내보냈어요. 파일을 보관해두세요.' : '내보내기를 취소했어요.');
+  };
 
   const timeLabel = (sec) => {
     const h = Math.floor(sec / 3600);
@@ -99,6 +107,20 @@ export default function SummaryScreen({ route, navigation }) {
           </View>
         </View>
 
+        {/* 러닝 로그 — 현장 테스트 분석용 */}
+        {runLog && (
+          <View style={styles.logBox}>
+            <Text style={styles.logTitle}>러닝 로그 기록됨</Text>
+            <Text style={styles.logDetail}>
+              발화 {runLog.speech.length}회 · 페이스 샘플 {runLog.samples.length}개 · 정지 {runLog.pauses.length}회
+            </Text>
+            <TouchableOpacity style={styles.btnExport} onPress={handleExport}>
+              <Text style={styles.btnExportText}>이번 러닝 데이터 내보내기 (JSON)</Text>
+            </TouchableOpacity>
+            {exportMsg && <Text style={styles.exportMsg}>{exportMsg}</Text>}
+          </View>
+        )}
+
         {/* 버튼 */}
         <TouchableOpacity
           style={styles.btnAgain}
@@ -152,6 +174,20 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#2a2200',
   },
   fieldTestFinalQ: { fontSize: 13, color: '#D97706', lineHeight: 20, fontWeight: '600' },
+
+  logBox: {
+    backgroundColor: '#111', borderRadius: 16, padding: 20,
+    borderWidth: 1, borderColor: '#1a1a1a', marginBottom: 24,
+  },
+  logTitle: { fontSize: 14, color: '#fff', fontWeight: '700', marginBottom: 4 },
+  logDetail: { fontSize: 12, color: '#555', marginBottom: 16 },
+  btnExport: {
+    backgroundColor: '#0a0a0a', borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center',
+    borderWidth: 1, borderColor: '#333',
+  },
+  btnExportText: { fontSize: 14, fontWeight: '700', color: '#bbb' },
+  exportMsg: { fontSize: 12, color: '#4ADE80', marginTop: 10, textAlign: 'center' },
 
   btnAgain: {
     backgroundColor: '#4ADE80', borderRadius: 18,

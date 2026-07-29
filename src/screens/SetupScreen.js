@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   TextInput, SafeAreaView, ScrollView, StatusBar,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { loadHistory, exportHistory, clearHistory } from '../data/runLog';
 
 const PERSONAS = [
   { id: 'coach', label: '코치형', desc: '차분하게 알려줄게요', emoji: '🎯' },
@@ -25,6 +27,44 @@ export default function SetupScreen({ navigation }) {
   const [persona, setPersona] = useState('coach');
   const [targetPaceSec, setTargetPaceSec] = useState(420); // 7:00
   const [targetDistanceKm, setTargetDistanceKm] = useState(5);
+  const [history, setHistory] = useState([]);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  // 요약 화면에서 돌아올 때마다 최신 기록을 다시 읽는다
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      loadHistory().then((h) => {
+        if (alive) setHistory(h);
+      });
+      setConfirmClear(false);
+      return () => {
+        alive = false;
+      };
+    }, [])
+  );
+
+  const handleExportHistory = async () => {
+    await exportHistory();
+  };
+
+  const handleClearHistory = async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    await clearHistory();
+    setHistory([]);
+    setConfirmClear(false);
+  };
+
+  const historySummary = () => {
+    const last = history[history.length - 1];
+    if (!last) return '';
+    const d = new Date(last.date);
+    const km = last.result ? last.result.km.toFixed(1) : '0.0';
+    return `${history.length}회 저장됨 · 최근 ${d.getMonth() + 1}/${d.getDate()} ${km}km`;
+  };
 
   const paceLabel = () => {
     const m = Math.floor(targetPaceSec / 60);
@@ -107,6 +147,27 @@ export default function SetupScreen({ navigation }) {
           <Text style={styles.startBtnText}>달리기 시작</Text>
         </TouchableOpacity>
 
+        {/* 누적 러닝 기록 — 현장 테스트 분석용 */}
+        {history.length > 0 && (
+          <View style={styles.historyBox}>
+            <Text style={styles.historyTitle}>러닝 기록</Text>
+            <Text style={styles.historySub}>{historySummary()}</Text>
+            <View style={styles.historyBtnRow}>
+              <TouchableOpacity style={styles.historyBtn} onPress={handleExportHistory}>
+                <Text style={styles.historyBtnText}>전체 내보내기</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.historyBtn, confirmClear && styles.historyBtnDanger]}
+                onPress={handleClearHistory}
+              >
+                <Text style={[styles.historyBtnText, confirmClear && styles.historyBtnDangerText]}>
+                  {confirmClear ? '정말 삭제?' : '삭제'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
       </ScrollView>
     </SafeAreaView>
   );
@@ -155,4 +216,19 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 12,
   },
   startBtnText: { fontSize: 18, fontWeight: '800', color: '#0a0a0a', letterSpacing: 0.5 },
+
+  historyBox: {
+    marginTop: 28, backgroundColor: '#111', borderRadius: 16, padding: 18,
+    borderWidth: 1, borderColor: '#1a1a1a',
+  },
+  historyTitle: { fontSize: 13, color: '#fff', fontWeight: '700', marginBottom: 4 },
+  historySub: { fontSize: 12, color: '#555', marginBottom: 14 },
+  historyBtnRow: { flexDirection: 'row', gap: 8 },
+  historyBtn: {
+    flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center',
+    borderWidth: 1, borderColor: '#333', backgroundColor: '#0a0a0a',
+  },
+  historyBtnText: { fontSize: 13, color: '#bbb', fontWeight: '600' },
+  historyBtnDanger: { borderColor: '#F87171', backgroundColor: '#2a0a0a' },
+  historyBtnDangerText: { color: '#F87171' },
 });

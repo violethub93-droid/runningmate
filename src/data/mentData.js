@@ -140,7 +140,10 @@ export const SITUATIONS = {
         '반 왔어, 잘하고 있어!',
       ],
     },
-    audioKeys: { coach: [], friend: [] },
+    audioKeys: {
+      coach: ['halfway_coach_01', 'halfway_coach_02'],
+      friend: ['halfway_friend_01', 'halfway_friend_02'],
+    },
   },
   paused: {
     cooldown_sec: 0,

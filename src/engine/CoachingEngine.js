@@ -23,11 +23,12 @@ const DIST_EVENT_GAP_MS = 2500;
 const RESUME_GUARD_MS = 3500;
 
 export class CoachingEngine {
-  constructor({ persona = 'coach', targetPaceSec, targetDistanceKm, onGoalReached }) {
+  constructor({ persona = 'coach', targetPaceSec, targetDistanceKm, onGoalReached, onSpeak }) {
     this.persona = persona;
     this.targetPaceSec = targetPaceSec;
     this.targetDistanceKm = targetDistanceKm;
     this.onGoalReached = onGoalReached;
+    this.onSpeak = onSpeak; // 발화가 실제로 나갈 때 호출 — 러닝 로그 수집용
     this.lastSpoken = {};
     this.lastVariantIndex = {};
     this.passedMilestones = new Set();
@@ -89,14 +90,20 @@ export class CoachingEngine {
       this.passedMilestones.add(km);
       this.halfwayPlayed = true;
       this.lastDistEventAt = now;
-      await this._playSequence([this._pickMilestone(km), this._pickVariant('halfway', now)]);
+      await this._playSequence(
+        [this._pickMilestone(km), this._pickVariant('halfway', now)],
+        `milestone_${km}km+halfway`
+      );
       return;
     }
     if (mDue && fDue) {
       this.passedMilestones.add(km);
       this.finalPushPlayed = true;
       this.lastDistEventAt = now;
-      await this._playSequence([this._pickMilestone(km), this._pickVariant('final_push', now)]);
+      await this._playSequence(
+        [this._pickMilestone(km), this._pickVariant('final_push', now)],
+        `milestone_${km}km+final_push`
+      );
       return;
     }
     if (hDue && fDue) {
@@ -255,7 +262,7 @@ export class CoachingEngine {
   async _playVariant(situationId, now) {
     const picked = this._pickVariant(situationId, now);
     if (!picked) return;
-    await this._play(picked.audioKey, picked.text);
+    await this._play(picked.audioKey, picked.text, situationId);
   }
 
   _pickMilestone(km) {
@@ -267,14 +274,24 @@ export class CoachingEngine {
 
   async _playMilestone(km) {
     const picked = this._pickMilestone(km);
-    await this._play(picked.audioKey, picked.text);
+    await this._play(picked.audioKey, picked.text, `milestone_${km}km`);
+  }
+
+  // 병합 멘트도 러너에겐 한 번의 발화 — 클립 수가 아니라 발화 단위로 로그를 남긴다
+  _report(situationId, items) {
+    if (!this.onSpeak) return;
+    const withClip = items.filter((it) => it && audioMap[it.audioKey]).length;
+    const src = withClip === items.length ? 'clip' : withClip === 0 ? 'tts' : 'mixed';
+    const text = items.map((it) => it?.text).filter(Boolean).join(' ');
+    this.onSpeak({ sit: situationId, text, src });
   }
 
   // v9: 병합 멘트 — 새로 합성하지 않고 기존 클립 여러 개를 순서대로 이어 재생
-  async _playSequence(items) {
+  async _playSequence(items, situationId) {
     if (this.isSpeaking) return;
     const token = ++this.playToken;
     this.isSpeaking = true;
+    this._report(situationId, items);
     try {
       for (const item of items) {
         if (!item) continue;
@@ -286,10 +303,11 @@ export class CoachingEngine {
     }
   }
 
-  async _play(audioKey, ttsText) {
+  async _play(audioKey, ttsText, situationId) {
     if (this.isSpeaking) return;
     const token = ++this.playToken;
     this.isSpeaking = true;
+    this._report(situationId, [{ audioKey, text: ttsText }]);
     try {
       await this._playOne(audioKey, ttsText, token);
     } finally {

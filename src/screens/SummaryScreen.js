@@ -4,9 +4,13 @@ import {
   SafeAreaView, StatusBar, ScrollView,
 } from 'react-native';
 import { exportRun } from '../data/runLog';
+import { paceLabel, clockLabel } from '../data/settings';
+import { C } from '../theme';
 
 export default function SummaryScreen({ route, navigation }) {
-  const { elapsedSec, distanceKm, avgPaceSec, persona, targetPaceSec, targetDistanceKm, runLog } = route.params;
+  const {
+    elapsedSec, distanceKm, avgPaceSec, persona, targetPaceSec, targetDistanceKm, runLog,
+  } = route.params;
   const [exportMsg, setExportMsg] = useState(null);
 
   const handleExport = async () => {
@@ -15,118 +19,115 @@ export default function SummaryScreen({ route, navigation }) {
     setExportMsg(ok ? '내보냈어요. 파일을 보관해두세요.' : '내보내기를 취소했어요.');
   };
 
-  const timeLabel = (sec) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = sec % 60;
-    if (h > 0) return `${h}시간 ${m}분 ${s}초`;
-    if (m > 0) return `${m}분 ${s}초`;
-    return `${s}초`;
-  };
-
-  const paceLabel = (sec) => {
-    if (!sec || sec <= 0) return '--:--';
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
-
+  const goalAchieved = runLog?.result?.goal
+    ?? (targetDistanceKm > 0 && distanceKm >= targetDistanceKm * 0.98);
+  const pauseCount = runLog?.pauses?.length ?? 0;
+  const spokenCount = runLog?.speech?.length ?? 0;
   const paceDiff = avgPaceSec && targetPaceSec ? avgPaceSec - targetPaceSec : 0;
-  const paceComment = () => {
-    if (!avgPaceSec) return '데이터를 수집하지 못했어요.';
-    if (Math.abs(paceDiff) <= 15) return '목표 페이스를 잘 유지했어요. 훌륭해요!';
-    if (paceDiff < -15) return `목표보다 ${Math.abs(paceDiff)}초 빠르게 달렸어요. 초반 오버페이스를 주의해봐요.`;
-    return `목표보다 ${paceDiff}초 느렸어요. 다음엔 조금 더 올려봐요.`;
-  };
 
-  const goalAchieved = targetDistanceKm > 0 && distanceKm >= targetDistanceKm * 0.98;
+  // 서사형 리포트 — 목표·완주·정지·페이스를 한 단락으로
+  const narrative = () => {
+    const parts = [];
+    parts.push(
+      targetDistanceKm > 0
+        ? `목표 ${targetDistanceKm.toFixed(1)}km 중 ${distanceKm.toFixed(2)}km를 운동시간 ${clockLabel(elapsedSec)}에 달렸어요.`
+        : `${distanceKm.toFixed(2)}km를 운동시간 ${clockLabel(elapsedSec)}에 달렸어요.`
+    );
+    if (goalAchieved) parts.push('목표 거리를 완주했어요!');
+    if (!avgPaceSec) {
+      parts.push('페이스 데이터를 충분히 모으지 못했어요.');
+    } else if (Math.abs(paceDiff) <= 15) {
+      parts.push('목표 페이스를 잘 유지했어요. 훌륭해요.');
+    } else if (paceDiff < 0) {
+      parts.push(`목표보다 ${Math.abs(paceDiff)}초 빠르게 달렸어요. 초반 오버페이스를 주의해봐요.`);
+    } else {
+      parts.push(`목표보다 ${paceDiff}초 느렸어요. 다음엔 조금 더 올려봐요.`);
+    }
+    if (pauseCount > 0) {
+      parts.push(`중간에 ${pauseCount}번 멈췄고, 정지 시간은 기록에서 제외했어요.`);
+    }
+    parts.push('수고했어요.');
+    return parts.join(' ');
+  };
 
   const fieldTestItems = [
     '멘트가 너무 자주 / 너무 드물게 나왔나?',
     '목소리 톤이 동행자 같았나, 안내방송 같았나?',
     '상황과 안 맞는 멘트가 있었나?',
-    '가장 도움됐던 멘트는?',
-    '가장 불필요했던 멘트는?',
+    '마일스톤이 km 밟는 즉시 나왔나?',
+    '정지·재시작 감지가 상황에 맞았나?',
+  ];
+
+  const stats = [
+    { v: clockLabel(elapsedSec), l: '운동 시간 (정지 제외)' },
+    { v: paceLabel(avgPaceSec), l: '평균 페이스' },
+    { v: String(spokenCount), l: '발화 횟수' },
+    { v: String(pauseCount), l: '일시정지 (회)' },
   ];
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
+      <StatusBar barStyle="light-content" backgroundColor={C.night} />
       <ScrollView contentContainerStyle={styles.container}>
 
-        {/* 결과 헤더 */}
-        <View style={styles.header}>
-          <Text style={styles.emoji}>{goalAchieved ? '🎉' : '✅'}</Text>
-          <Text style={styles.title}>{goalAchieved ? '목표 달성!' : '잘 달렸어요'}</Text>
-          <Text style={styles.sub}>오늘 러닝 요약</Text>
+        <Text style={styles.eyebrow}>러닝 리포트</Text>
+        <Text style={styles.brand}>{goalAchieved ? '목표 달성!' : '수고했어요'}</Text>
+
+        <View style={styles.hero}>
+          <Text style={styles.heroDist}>
+            {distanceKm.toFixed(2)}<Text style={styles.heroUnit}> km</Text>
+          </Text>
+          <Text style={styles.heroSub}>
+            {persona === 'coach' ? '코치형' : '친구형'} · 목표 {paceLabel(targetPaceSec)}/km
+          </Text>
         </View>
 
-        {/* 핵심 지표 */}
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{distanceKm >= 1 ? distanceKm.toFixed(2) : (distanceKm * 1000).toFixed(0)}</Text>
-            <Text style={styles.metricUnit}>{distanceKm >= 1 ? 'km' : 'm'}</Text>
-            <Text style={styles.metricLabel}>거리</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{timeLabel(elapsedSec)}</Text>
-            <Text style={styles.metricLabel}>시간</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{paceLabel(avgPaceSec)}</Text>
-            <Text style={styles.metricUnit}>/km</Text>
-            <Text style={styles.metricLabel}>평균 페이스</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{paceLabel(targetPaceSec)}</Text>
-            <Text style={styles.metricUnit}>/km</Text>
-            <Text style={styles.metricLabel}>목표 페이스</Text>
-          </View>
+        <View style={styles.card}>
+          <Text style={styles.narrative}>{narrative()}</Text>
         </View>
 
-        {/* AI 코멘트 */}
-        <View style={styles.commentBox}>
-          <Text style={styles.commentLabel}>메이트 평가</Text>
-          <Text style={styles.commentText}>{paceComment()}</Text>
-        </View>
-
-        {/* 현장 테스트 체크리스트 */}
-        <View style={styles.fieldTestBox}>
-          <Text style={styles.fieldTestTitle}>현장 테스트 체크리스트</Text>
-          <Text style={styles.fieldTestSub}>달리고 나서 기록해두세요 (음성 메모 추천)</Text>
-          {fieldTestItems.map((item, i) => (
-            <View key={i} style={styles.fieldTestItem}>
-              <Text style={styles.fieldTestBullet}>□</Text>
-              <Text style={styles.fieldTestText}>{item}</Text>
+        <View style={styles.statGrid}>
+          {stats.map((s) => (
+            <View key={s.l} style={styles.stat}>
+              <Text style={styles.statVal}>{s.v}</Text>
+              <Text style={styles.statLbl}>{s.l}</Text>
             </View>
           ))}
-          <View style={styles.fieldTestFinalBox}>
-            <Text style={styles.fieldTestFinalQ}>
-              핵심 질문: 동행자처럼 느껴졌나요, 트래커 음성안내처럼 느껴졌나요?
-            </Text>
-          </View>
         </View>
 
         {/* 러닝 로그 — 현장 테스트 분석용 */}
         {runLog && (
-          <View style={styles.logBox}>
-            <Text style={styles.logTitle}>러닝 로그 기록됨</Text>
-            <Text style={styles.logDetail}>
-              발화 {runLog.speech.length}회 · 페이스 샘플 {runLog.samples.length}개 · 정지 {runLog.pauses.length}회
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>러닝 로그 기록됨</Text>
+            <Text style={styles.cardSub}>
+              발화 {spokenCount}회 · 페이스 샘플 {runLog.samples.length}개 · 정지 {pauseCount}회
             </Text>
-            <TouchableOpacity style={styles.btnExport} onPress={handleExport}>
-              <Text style={styles.btnExportText}>이번 러닝 데이터 내보내기 (JSON)</Text>
+            <TouchableOpacity style={styles.btnGhost} onPress={handleExport}>
+              <Text style={styles.btnGhostTxt}>이번 러닝 데이터 내보내기 (JSON)</Text>
             </TouchableOpacity>
             {exportMsg && <Text style={styles.exportMsg}>{exportMsg}</Text>}
           </View>
         )}
 
-        {/* 버튼 */}
-        <TouchableOpacity
-          style={styles.btnAgain}
-          onPress={() => navigation.replace('Setup')}
-        >
-          <Text style={styles.btnAgainText}>다시 달리기</Text>
+        {/* 현장 테스트 체크리스트 */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>현장 테스트 체크리스트</Text>
+          <Text style={styles.cardSub}>달리고 나서 기록해두세요 (음성 메모 추천)</Text>
+          {fieldTestItems.map((item, i) => (
+            <View key={i} style={styles.checkItem}>
+              <Text style={styles.checkBullet}>□</Text>
+              <Text style={styles.checkTxt}>{item}</Text>
+            </View>
+          ))}
+          <View style={styles.finalQBox}>
+            <Text style={styles.finalQ}>
+              핵심 질문: 동행자처럼 느껴졌나요, 트래커 음성안내처럼 느껴졌나요?
+            </Text>
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.btnAgain} onPress={() => navigation.replace('Setup')}>
+          <Text style={styles.btnAgainTxt}>다시 달리기</Text>
         </TouchableOpacity>
 
       </ScrollView>
@@ -135,63 +136,52 @@ export default function SummaryScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0a0a0a' },
-  container: { padding: 24, paddingBottom: 40 },
+  safe: { flex: 1, backgroundColor: C.night },
+  container: { padding: 20, paddingBottom: 40, maxWidth: 460, width: '100%', alignSelf: 'center' },
 
-  header: { alignItems: 'center', marginTop: 24, marginBottom: 32 },
-  emoji: { fontSize: 48, marginBottom: 8 },
-  title: { fontSize: 28, fontWeight: '800', color: '#fff', marginBottom: 4 },
-  sub: { fontSize: 14, color: '#555' },
+  eyebrow: { fontSize: 11, letterSpacing: 2, color: C.cool, fontWeight: '500', marginTop: 10 },
+  brand: { fontSize: 20, fontWeight: '700', color: C.text, marginTop: 2 },
 
-  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
-  metricCard: {
-    flex: 1, minWidth: '45%', backgroundColor: '#111',
-    borderRadius: 16, padding: 20, alignItems: 'center',
-    borderWidth: 1, borderColor: '#1a1a1a',
-  },
-  metricValue: { fontSize: 26, fontWeight: '800', color: '#fff' },
-  metricUnit: { fontSize: 13, color: '#555', marginTop: 2 },
-  metricLabel: { fontSize: 12, color: '#555', marginTop: 6, fontWeight: '600' },
+  hero: { alignItems: 'center', marginVertical: 18 },
+  heroDist: { fontSize: 50, fontWeight: '800', color: C.text, letterSpacing: -1 },
+  heroUnit: { fontSize: 16, color: C.muted, fontWeight: '400' },
+  heroSub: { fontSize: 12, color: C.cool, marginTop: 4 },
 
-  commentBox: {
-    backgroundColor: '#0f2010', borderRadius: 16, padding: 20,
-    borderWidth: 1, borderColor: '#1a3a1a', marginBottom: 24,
+  card: {
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.line,
+    borderRadius: 14, padding: 16, marginBottom: 9,
   },
-  commentLabel: { fontSize: 12, color: '#4ADE80', fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 },
-  commentText: { fontSize: 15, color: '#bbb', lineHeight: 22 },
+  cardTitle: { fontSize: 13, color: C.text, fontWeight: '600', marginBottom: 4 },
+  cardSub: { fontSize: 11, color: C.cool, marginBottom: 12 },
+  narrative: { fontSize: 13, color: '#D4D9E4', lineHeight: 22 },
 
-  fieldTestBox: {
-    backgroundColor: '#111', borderRadius: 16, padding: 20,
-    borderWidth: 1, borderColor: '#1a1a1a', marginBottom: 24,
+  statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 9 },
+  stat: {
+    flexBasis: '48%', flexGrow: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line,
+    borderRadius: 11, padding: 12,
   },
-  fieldTestTitle: { fontSize: 14, color: '#fff', fontWeight: '700', marginBottom: 4 },
-  fieldTestSub: { fontSize: 12, color: '#555', marginBottom: 16 },
-  fieldTestItem: { flexDirection: 'row', gap: 10, marginBottom: 12, alignItems: 'flex-start' },
-  fieldTestBullet: { fontSize: 16, color: '#555', width: 16 },
-  fieldTestText: { flex: 1, fontSize: 14, color: '#888', lineHeight: 20 },
-  fieldTestFinalBox: {
-    backgroundColor: '#1a1200', borderRadius: 12, padding: 14, marginTop: 8,
-    borderWidth: 1, borderColor: '#2a2200',
-  },
-  fieldTestFinalQ: { fontSize: 13, color: '#D97706', lineHeight: 20, fontWeight: '600' },
+  statVal: { fontSize: 18, fontWeight: '700', color: C.text },
+  statLbl: { fontSize: 11, color: C.muted, marginTop: 2 },
 
-  logBox: {
-    backgroundColor: '#111', borderRadius: 16, padding: 20,
-    borderWidth: 1, borderColor: '#1a1a1a', marginBottom: 24,
+  btnGhost: {
+    backgroundColor: C.night, borderRadius: 12, paddingVertical: 13,
+    alignItems: 'center', borderWidth: 1, borderColor: C.line,
   },
-  logTitle: { fontSize: 14, color: '#fff', fontWeight: '700', marginBottom: 4 },
-  logDetail: { fontSize: 12, color: '#555', marginBottom: 16 },
-  btnExport: {
-    backgroundColor: '#0a0a0a', borderRadius: 12,
-    paddingVertical: 14, alignItems: 'center',
-    borderWidth: 1, borderColor: '#333',
+  btnGhostTxt: { fontSize: 13, fontWeight: '600', color: C.muted },
+  exportMsg: { fontSize: 11, color: C.good, marginTop: 10, textAlign: 'center' },
+
+  checkItem: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  checkBullet: { fontSize: 14, color: C.cool, width: 14 },
+  checkTxt: { flex: 1, fontSize: 12.5, color: C.muted, lineHeight: 18 },
+  finalQBox: {
+    backgroundColor: C.warmSoft, borderRadius: 9, padding: 12, marginTop: 4,
+    borderWidth: 1, borderColor: '#4A3528',
   },
-  btnExportText: { fontSize: 14, fontWeight: '700', color: '#bbb' },
-  exportMsg: { fontSize: 12, color: '#4ADE80', marginTop: 10, textAlign: 'center' },
+  finalQ: { fontSize: 12, color: C.warm, lineHeight: 18, fontWeight: '500' },
 
   btnAgain: {
-    backgroundColor: '#4ADE80', borderRadius: 18,
-    paddingVertical: 18, alignItems: 'center',
+    backgroundColor: C.warm, borderRadius: 14, paddingVertical: 16,
+    alignItems: 'center', marginTop: 4,
   },
-  btnAgainText: { fontSize: 17, fontWeight: '800', color: '#0a0a0a' },
+  btnAgainTxt: { fontSize: 15, fontWeight: '700', color: '#1A0E08' },
 });

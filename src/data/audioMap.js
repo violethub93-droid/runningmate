@@ -50,6 +50,14 @@ const audioMap = {
   idle_checkin_coach_03: require('../../assets/audio/idle_checkin_coach_03.mp3'),
   idle_checkin_friend_01: require('../../assets/audio/idle_checkin_friend_01.mp3'),
 
+  // ── 페이스 회복 (6개 적용) ───────────────────────────────
+  pace_recovered_coach_01: require('../../assets/audio/pace_recovered_coach_01.mp3'),
+  pace_recovered_coach_02: require('../../assets/audio/pace_recovered_coach_02.mp3'),
+  pace_recovered_coach_03: require('../../assets/audio/pace_recovered_coach_03.mp3'),
+  pace_recovered_friend_01: require('../../assets/audio/pace_recovered_friend_01.mp3'),
+  pace_recovered_friend_02: require('../../assets/audio/pace_recovered_friend_02.mp3'),
+  pace_recovered_friend_03: require('../../assets/audio/pace_recovered_friend_03.mp3'),
+
   // ── 반환점 (4개 적용) ────────────────────────────────────
   halfway_coach_01: require('../../assets/audio/halfway_coach_01.mp3'),
   halfway_coach_02: require('../../assets/audio/halfway_coach_02.mp3'),

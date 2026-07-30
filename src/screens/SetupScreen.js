@@ -1,32 +1,31 @@
 import React, { useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  TextInput, SafeAreaView, ScrollView, StatusBar,
+  SafeAreaView, ScrollView, StatusBar,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { loadHistory, exportHistory, clearHistory } from '../data/runLog';
+import { DEFAULTS, OPTIONS, GOAL_RANGE, PACE_RANGE, paceLabel } from '../data/settings';
+import { C } from '../theme';
 
 const PERSONAS = [
-  { id: 'coach', label: '코치형', desc: '차분하게 알려줄게요', emoji: '🎯' },
-  { id: 'friend', label: '친구형', desc: '같이 달리는 느낌', emoji: '👟' },
+  { id: 'coach', label: '코치형', emoji: '🧘' },
+  { id: 'friend', label: '친구형', emoji: '🤝' },
 ];
-
-const PRESET_PACES = [
-  { label: '5:00', sec: 300 },
-  { label: '5:30', sec: 330 },
-  { label: '6:00', sec: 360 },
-  { label: '6:30', sec: 390 },
-  { label: '7:00', sec: 420 },
-  { label: '7:30', sec: 450 },
-  { label: '8:00', sec: 480 },
-];
-
-const PRESET_DISTANCES = [3, 5, 10];
 
 export default function SetupScreen({ navigation }) {
-  const [persona, setPersona] = useState('coach');
-  const [targetPaceSec, setTargetPaceSec] = useState(420); // 7:00
-  const [targetDistanceKm, setTargetDistanceKm] = useState(5);
+  const [persona, setPersona] = useState(DEFAULTS.persona);
+  const [targetDistanceKm, setTargetDistanceKm] = useState(DEFAULTS.targetDistanceKm);
+  const [targetPaceSec, setTargetPaceSec] = useState(DEFAULTS.targetPaceSec);
+  const [cfg, setCfg] = useState({
+    judgeBasis: DEFAULTS.judgeBasis,
+    sensSec: DEFAULTS.sensSec,
+    globalGapSec: DEFAULTS.globalGapSec,
+    checkinSec: DEFAULTS.checkinSec,
+    warmupSec: DEFAULTS.warmupSec,
+    pauseSec: DEFAULTS.pauseSec,
+    resumeSec: DEFAULTS.resumeSec,
+  });
   const [history, setHistory] = useState([]);
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -44,15 +43,18 @@ export default function SetupScreen({ navigation }) {
     }, [])
   );
 
-  const handleExportHistory = async () => {
-    await exportHistory();
+  const bumpGoal = (d) => {
+    const next = Math.round((targetDistanceKm + d) * 2) / 2;
+    setTargetDistanceKm(Math.max(GOAL_RANGE.min, Math.min(GOAL_RANGE.max, next)));
+  };
+  const bumpPace = (d) => {
+    setTargetPaceSec(Math.max(PACE_RANGE.min, Math.min(PACE_RANGE.max, targetPaceSec + d)));
   };
 
+  const handleExportHistory = async () => { await exportHistory(); };
+
   const handleClearHistory = async () => {
-    if (!confirmClear) {
-      setConfirmClear(true);
-      return;
-    }
+    if (!confirmClear) { setConfirmClear(true); return; }
     await clearHistory();
     setHistory([]);
     setConfirmClear(false);
@@ -66,101 +68,132 @@ export default function SetupScreen({ navigation }) {
     return `${history.length}회 저장됨 · 최근 ${d.getMonth() + 1}/${d.getDate()} ${km}km`;
   };
 
-  const paceLabel = () => {
-    const m = Math.floor(targetPaceSec / 60);
-    const s = targetPaceSec % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
+  const handleStart = () => {
+    navigation.navigate('Running', {
+      persona,
+      targetPaceSec,
+      targetDistanceKm,
+      settings: { ...cfg, persona, targetPaceSec, targetDistanceKm },
+    });
   };
 
-  const handleStart = () => {
-    navigation.navigate('Running', { persona, targetPaceSec, targetDistanceKm });
-  };
+  const Seg = ({ label, hint, field }) => (
+    <>
+      <Text style={styles.lbl}>
+        {label} {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+      </Text>
+      <View style={styles.segRow}>
+        {OPTIONS[field].map((o) => {
+          const sel = cfg[field] === o.v;
+          return (
+            <TouchableOpacity
+              key={String(o.v)}
+              style={[styles.segBtn, sel && styles.segBtnSel]}
+              onPress={() => setCfg((c) => ({ ...c, [field]: o.v }))}
+            >
+              <Text style={[styles.segTxt, sel && styles.segTxtSel]}>{o.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </>
+  );
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
+      <StatusBar barStyle="light-content" backgroundColor={C.night} />
       <ScrollView contentContainerStyle={styles.container}>
 
-        <Text style={styles.appTitle}>러닝메이트</Text>
-        <Text style={styles.appSub}>오늘 같이 달려요</Text>
+        <Text style={styles.eyebrow}>러닝메이트</Text>
+        <Text style={styles.brand}>자동 트리거 러닝</Text>
 
-        {/* 페르소나 선택 */}
-        <Text style={styles.sectionLabel}>메이트 유형</Text>
-        <View style={styles.personaRow}>
-          {PERSONAS.map((p) => (
-            <TouchableOpacity
-              key={p.id}
-              style={[styles.personaCard, persona === p.id && styles.personaCardActive]}
-              onPress={() => setPersona(p.id)}
-            >
-              <Text style={styles.personaEmoji}>{p.emoji}</Text>
-              <Text style={[styles.personaLabel, persona === p.id && styles.personaLabelActive]}>
-                {p.label}
-              </Text>
-              <Text style={styles.personaDesc}>{p.desc}</Text>
-            </TouchableOpacity>
-          ))}
+        {/* 메이트 성격 */}
+        <View style={styles.card}>
+          <Text style={styles.lbl}>메이트 성격</Text>
+          <View style={styles.personaRow}>
+            {PERSONAS.map((p) => {
+              const sel = persona === p.id;
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  style={[styles.personaBtn, sel && styles.personaBtnSel]}
+                  onPress={() => setPersona(p.id)}
+                >
+                  <Text style={styles.personaEmoji}>{p.emoji}</Text>
+                  <Text style={[styles.personaLabel, sel && styles.personaLabelSel]}>{p.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
-        {/* 목표 페이스 */}
-        <Text style={styles.sectionLabel}>목표 페이스</Text>
-        <Text style={styles.currentValue}>{paceLabel()} / km</Text>
-        <View style={styles.presetRow}>
-          {PRESET_PACES.map((p) => (
-            <TouchableOpacity
-              key={p.sec}
-              style={[styles.presetBtn, targetPaceSec === p.sec && styles.presetBtnActive]}
-              onPress={() => setTargetPaceSec(p.sec)}
-            >
-              <Text style={[styles.presetBtnText, targetPaceSec === p.sec && styles.presetBtnTextActive]}>
-                {p.label}
+        {/* 목표 */}
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <View style={styles.rowLabel}>
+              <Text style={styles.lblInline}>목표 거리</Text>
+              <Text style={styles.hint}>도달 시 자동 종료</Text>
+            </View>
+            <View style={styles.stepper}>
+              <TouchableOpacity style={styles.stepBtn} onPress={() => bumpGoal(-GOAL_RANGE.step)}>
+                <Text style={styles.stepBtnTxt}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.stepVal}>
+                {targetDistanceKm.toFixed(1)}<Text style={styles.stepUnit}>km</Text>
               </Text>
-            </TouchableOpacity>
-          ))}
+              <TouchableOpacity style={styles.stepBtn} onPress={() => bumpGoal(GOAL_RANGE.step)}>
+                <Text style={styles.stepBtnTxt}>+</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={[styles.row, { marginTop: 14 }]}>
+            <View style={styles.rowLabel}>
+              <Text style={styles.lblInline}>목표 페이스</Text>
+            </View>
+            <View style={styles.stepper}>
+              <TouchableOpacity style={styles.stepBtn} onPress={() => bumpPace(PACE_RANGE.step)}>
+                <Text style={styles.stepBtnTxt}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.stepVal}>
+                {paceLabel(targetPaceSec)}<Text style={styles.stepUnit}>/km</Text>
+              </Text>
+              <TouchableOpacity style={styles.stepBtn} onPress={() => bumpPace(-PACE_RANGE.step)}>
+                <Text style={styles.stepBtnTxt}>+</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
 
-        {/* 목표 거리 */}
-        <Text style={styles.sectionLabel}>목표 거리</Text>
-        <View style={styles.presetRow}>
-          {PRESET_DISTANCES.map((d) => (
-            <TouchableOpacity
-              key={d}
-              style={[styles.distBtn, targetDistanceKm === d && styles.distBtnActive]}
-              onPress={() => setTargetDistanceKm(d)}
-            >
-              <Text style={[styles.distBtnText, targetDistanceKm === d && styles.distBtnTextActive]}>
-                {d}km
-              </Text>
-            </TouchableOpacity>
-          ))}
-          <TouchableOpacity
-            style={[styles.distBtn, targetDistanceKm === 0 && styles.distBtnActive]}
-            onPress={() => setTargetDistanceKm(0)}
-          >
-            <Text style={[styles.distBtnText, targetDistanceKm === 0 && styles.distBtnTextActive]}>
-              자유
-            </Text>
-          </TouchableOpacity>
+        {/* 코칭 파라미터 */}
+        <View style={styles.card}>
+          <Seg label="판단 기준" hint="코칭을 현재/평균 페이스 중 무엇으로 판단" field="judgeBasis" />
+          <Seg label="민감도" hint="목표 대비 허용 편차(초)" field="sensSec" />
+          <Seg label="전역 발화 간격" hint="페이스 코칭 최소 간격" field="globalGapSec" />
+          <Seg label="체크인 간격" field="checkinSec" />
+          <Seg label="시작 침묵(워밍업)" field="warmupSec" />
+          <Seg label="정지 감지" hint="멈춤 인식 시간 (짧을수록 빨리 멈춤)" field="pauseSec" />
+          <Seg label="재시작 감지" hint="다시 뛸 때 반응 (둔감할수록 덜 예민)" field="resumeSec" />
         </View>
 
         <TouchableOpacity style={styles.startBtn} onPress={handleStart}>
-          <Text style={styles.startBtnText}>달리기 시작</Text>
+          <Text style={styles.startBtnTxt}>러닝 시작</Text>
         </TouchableOpacity>
 
         {/* 누적 러닝 기록 — 현장 테스트 분석용 */}
         {history.length > 0 && (
-          <View style={styles.historyBox}>
-            <Text style={styles.historyTitle}>러닝 기록</Text>
-            <Text style={styles.historySub}>{historySummary()}</Text>
-            <View style={styles.historyBtnRow}>
-              <TouchableOpacity style={styles.historyBtn} onPress={handleExportHistory}>
-                <Text style={styles.historyBtnText}>전체 내보내기</Text>
+          <View style={[styles.card, { marginTop: 14 }]}>
+            <Text style={styles.lbl}>러닝 기록</Text>
+            <Text style={[styles.hint, { marginBottom: 12 }]}>{historySummary()}</Text>
+            <View style={styles.segRow}>
+              <TouchableOpacity style={styles.segBtn} onPress={handleExportHistory}>
+                <Text style={styles.segTxt}>전체 내보내기</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.historyBtn, confirmClear && styles.historyBtnDanger]}
+                style={[styles.segBtn, confirmClear && styles.segBtnDanger]}
                 onPress={handleClearHistory}
               >
-                <Text style={[styles.historyBtnText, confirmClear && styles.historyBtnDangerText]}>
+                <Text style={[styles.segTxt, confirmClear && styles.segTxtDanger]}>
                   {confirmClear ? '정말 삭제?' : '삭제'}
                 </Text>
               </TouchableOpacity>
@@ -174,61 +207,55 @@ export default function SetupScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0a0a0a' },
-  container: { padding: 24, paddingBottom: 40 },
-  appTitle: { fontSize: 32, fontWeight: '800', color: '#fff', marginTop: 20, letterSpacing: -0.5 },
-  appSub: { fontSize: 15, color: '#666', marginBottom: 36, marginTop: 4 },
+  safe: { flex: 1, backgroundColor: C.night },
+  container: { padding: 20, paddingBottom: 40, maxWidth: 460, width: '100%', alignSelf: 'center' },
 
-  sectionLabel: { fontSize: 13, color: '#888', fontWeight: '600', marginBottom: 12, letterSpacing: 0.5 },
+  eyebrow: { fontSize: 11, letterSpacing: 2, color: C.cool, fontWeight: '500', marginTop: 10 },
+  brand: { fontSize: 20, fontWeight: '700', color: C.text, marginTop: 2, marginBottom: 12 },
 
-  personaRow: { flexDirection: 'row', gap: 12, marginBottom: 32 },
-  personaCard: {
-    flex: 1, borderRadius: 16, borderWidth: 1.5, borderColor: '#222',
-    backgroundColor: '#111', padding: 16, alignItems: 'center',
+  card: {
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.line,
+    borderRadius: 14, padding: 14, marginBottom: 9,
   },
-  personaCardActive: { borderColor: '#4ADE80', backgroundColor: '#0f2010' },
-  personaEmoji: { fontSize: 24, marginBottom: 6 },
-  personaLabel: { fontSize: 15, fontWeight: '700', color: '#aaa', marginBottom: 4 },
-  personaLabelActive: { color: '#4ADE80' },
-  personaDesc: { fontSize: 11, color: '#555', textAlign: 'center' },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  rowLabel: { flexShrink: 1 },
+  lbl: { fontSize: 13, color: C.muted, marginBottom: 8 },
+  lblInline: { fontSize: 13, color: C.muted },
+  hint: { fontSize: 11, color: C.cool, lineHeight: 16 },
 
-  currentValue: { fontSize: 40, fontWeight: '800', color: '#fff', marginBottom: 14 },
-
-  presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 32 },
-  presetBtn: {
-    paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20,
-    borderWidth: 1.5, borderColor: '#222', backgroundColor: '#111',
+  personaRow: { flexDirection: 'row', gap: 8 },
+  personaBtn: {
+    flex: 1, backgroundColor: C.surface2, borderWidth: 1, borderColor: C.line,
+    borderRadius: 11, paddingVertical: 11, alignItems: 'center',
   },
-  presetBtnActive: { borderColor: '#4ADE80', backgroundColor: '#0f2010' },
-  presetBtnText: { fontSize: 14, color: '#666', fontWeight: '600' },
-  presetBtnTextActive: { color: '#4ADE80' },
+  personaBtnSel: { borderColor: C.warm, backgroundColor: C.warmSoft },
+  personaEmoji: { fontSize: 16, marginBottom: 2 },
+  personaLabel: { fontSize: 13, fontWeight: '500', color: C.muted },
+  personaLabelSel: { color: C.warm },
 
-  distBtn: {
-    paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20,
-    borderWidth: 1.5, borderColor: '#222', backgroundColor: '#111',
+  stepper: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  stepBtn: {
+    width: 31, height: 31, borderRadius: 9, backgroundColor: C.surface2,
+    borderWidth: 1, borderColor: C.line, alignItems: 'center', justifyContent: 'center',
   },
-  distBtnActive: { borderColor: '#4ADE80', backgroundColor: '#0f2010' },
-  distBtnText: { fontSize: 15, color: '#666', fontWeight: '600' },
-  distBtnTextActive: { color: '#4ADE80' },
+  stepBtnTxt: { fontSize: 16, color: C.text, lineHeight: 18 },
+  stepVal: { fontSize: 18, fontWeight: '700', color: C.text, minWidth: 74, textAlign: 'center' },
+  stepUnit: { fontSize: 10, color: C.muted, fontWeight: '400' },
+
+  segRow: { flexDirection: 'row', gap: 5, marginBottom: 10 },
+  segBtn: {
+    flex: 1, backgroundColor: C.surface2, borderWidth: 1, borderColor: C.line,
+    borderRadius: 9, paddingVertical: 9, alignItems: 'center', justifyContent: 'center',
+  },
+  segBtnSel: { borderColor: C.warm, backgroundColor: C.warmSoft },
+  segTxt: { fontSize: 11.5, color: C.muted, fontWeight: '500', textAlign: 'center' },
+  segTxtSel: { color: C.warm },
+  segBtnDanger: { borderColor: C.bad, backgroundColor: '#2A1614' },
+  segTxtDanger: { color: C.bad },
 
   startBtn: {
-    backgroundColor: '#4ADE80', borderRadius: 20, paddingVertical: 18,
-    alignItems: 'center', marginTop: 12,
+    backgroundColor: C.warm, borderRadius: 14, paddingVertical: 16,
+    alignItems: 'center', marginTop: 6,
   },
-  startBtnText: { fontSize: 18, fontWeight: '800', color: '#0a0a0a', letterSpacing: 0.5 },
-
-  historyBox: {
-    marginTop: 28, backgroundColor: '#111', borderRadius: 16, padding: 18,
-    borderWidth: 1, borderColor: '#1a1a1a',
-  },
-  historyTitle: { fontSize: 13, color: '#fff', fontWeight: '700', marginBottom: 4 },
-  historySub: { fontSize: 12, color: '#555', marginBottom: 14 },
-  historyBtnRow: { flexDirection: 'row', gap: 8 },
-  historyBtn: {
-    flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center',
-    borderWidth: 1, borderColor: '#333', backgroundColor: '#0a0a0a',
-  },
-  historyBtnText: { fontSize: 13, color: '#bbb', fontWeight: '600' },
-  historyBtnDanger: { borderColor: '#F87171', backgroundColor: '#2a0a0a' },
-  historyBtnDangerText: { color: '#F87171' },
+  startBtnTxt: { fontSize: 15, fontWeight: '700', color: '#1A0E08' },
 });

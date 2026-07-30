@@ -62,6 +62,26 @@ export const SITUATIONS = {
       friend: ['pace_on_target_friend_01'],
     },
   },
+  // 이탈했다가 목표 페이스로 돌아왔을 때 (v10 엔진의 회복 인지)
+  pace_recovered: {
+    cooldown_sec: 40,
+    variants: {
+      coach: [
+        '좋아요, 다시 페이스 찾았어요.',
+        '잘 돌아왔어요. 이 리듬 유지해요.',
+        '페이스 안정됐어요. 그대로 가요.',
+      ],
+      friend: [
+        '오 다시 페이스 찾았다, 좋아!',
+        '잘 돌아왔어, 그대로 가자.',
+        '그래 이거지, 이대로 쭉!',
+      ],
+    },
+    audioKeys: {
+      coach: ['pace_recovered_coach_01', 'pace_recovered_coach_02', 'pace_recovered_coach_03'],
+      friend: ['pace_recovered_friend_01', 'pace_recovered_friend_02', 'pace_recovered_friend_03'],
+    },
+  },
   cadence_low: {
     cooldown_sec: 60,
     variants: {

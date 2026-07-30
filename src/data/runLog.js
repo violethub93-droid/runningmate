@@ -11,7 +11,7 @@ const MAX_BYTES = 4 * 1024 * 1024; // 이 크기를 넘으면 오래된 러닝�
 export const SAMPLE_FORMAT =
   '[t초, 거리m, 페이스 초/km(-1 없음), 케이던스 spm(-1 없음), GPS정확도 m(-1 없음), 일시정지 0/1]';
 
-export function createRunLog({ persona, targetPaceSec, targetDistanceKm }) {
+export function createRunLog({ persona, targetPaceSec, targetDistanceKm, settings }) {
   return {
     ver: 11,
     date: new Date().toISOString(),
@@ -19,6 +19,8 @@ export function createRunLog({ persona, targetPaceSec, targetDistanceKm }) {
     persona,
     targetSec: targetPaceSec,
     goalKm: targetDistanceKm,
+    // 어떤 코칭 파라미터로 달렸는지 — 현장 테스트 결과를 설정과 함께 해석하기 위해
+    settings: settings || null,
     sampleFormat: SAMPLE_FORMAT,
     samples: [],
     speech: [],

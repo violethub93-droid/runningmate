@@ -3,33 +3,30 @@ import * as Speech from 'expo-speech';
 import {
   SITUATIONS,
   MILESTONES,
-  PACE_THRESHOLDS,
   CADENCE_THRESHOLD,
   FINAL_PUSH_RATIO,
   HALFWAY_RATIO,
   SLOPE_THRESHOLDS,
   milestoneFallbackText,
 } from '../data/mentData';
+import { DEFAULTS, DIST_EVENT_GAP_MS, RESUME_GUARD_MS } from '../data/settings';
 import audioMap from '../data/audioMap';
 
 // 오디오 세션 인터럽트/언로드로 didJustFinish가 영영 안 올 때를 대비한 최대 대기 시간
 const PLAYBACK_TIMEOUT_MS = 15000;
 
-// v8: 거리 이벤트(마일스톤/반환점/막바지)는 GPS 갱신마다 즉시 재검사하되,
-// 같은 이벤트가 짧은 시간 내 중복 발화되지 않도록 최소 간격만 둔다 (페이스 코칭용 쿨다운과는 별개)
-const DIST_EVENT_GAP_MS = 2500;
-
-// v7: 재시작 멘트 직후 페이스 코칭이 바로 끼어들지 않도록 잠시 보류하는 구간
-const RESUME_GUARD_MS = 3500;
-
 export class CoachingEngine {
-  constructor({ persona = 'coach', targetPaceSec, targetDistanceKm, onGoalReached, onSpeak }) {
+  constructor({ persona = 'coach', targetPaceSec, targetDistanceKm, settings, onGoalReached, onSpeak, onStateChange }) {
     this.persona = persona;
     this.targetPaceSec = targetPaceSec;
     this.targetDistanceKm = targetDistanceKm;
+    // 코칭 파라미터 — Setup 화면에서 넘어온 값, 없으면 3차 테스트 확정 기본값
+    this.cfg = { ...DEFAULTS, ...(settings || {}) };
     this.onGoalReached = onGoalReached;
     this.onSpeak = onSpeak; // 발화가 실제로 나갈 때 호출 — 러닝 로그 수집용
+    this.onStateChange = onStateChange; // 말풍선/애니메이션용 발화 상태 통지
     this.lastSpoken = {};
+    this.bags = {}; // 셔플백 — 모든 변형을 쓰기 전엔 같은 멘트를 반복하지 않는다
     this.lastVariantIndex = {};
     this.passedMilestones = new Set();
     this.halfwayPlayed = false;
@@ -37,6 +34,12 @@ export class CoachingEngine {
     this.goalReached = false;
     this.sound = null;
     this.isSpeaking = false;
+    this.muted = false;
+    // 경과 시간은 화면의 타이머(정지 시간 제외)를 단일 출처로 삼아 매 호출 시 전달받는다
+    this.elapsedSec = 0;
+    this.lastSpeakAtSec = -Infinity;
+    this.recentDev = [];
+    this.wasDeviated = false;
     this.guardUntil = 0; // v7: 재시작 우선 구간 — 이 시각까지 페이스 코칭 보류
     this.lastDistEventAt = -Infinity; // v8: 거리 이벤트 재발화 최소 간격 추적
     this.playToken = 0; // 재생 취소-안전성: 강제 발화가 선점하면 이전 재생의 뒤늦은 완료 콜백이 상태를 덮어쓰지 못하게 함
@@ -51,9 +54,11 @@ export class CoachingEngine {
 
   // v8: 거리 기반 이벤트(완주/마일스톤/반환점/막바지) — RunningScreen의 GPS 콜백에서
   // 위치 갱신마다 직접 호출한다(타이밍 지연 최소화). evaluate()에서도 백업으로 재호출됨.
-  async checkDistanceEvents({ distanceKm }) {
+  async checkDistanceEvents({ distanceKm, elapsedSec }) {
     if (this.goalReached) return;
+    if (elapsedSec != null) this.elapsedSec = elapsedSec;
     const now = Date.now();
+    if (this.elapsedSec < this.cfg.warmupSec) return; // 시작 침묵 구간
 
     // 완주 — 최우선. 다른 멘트를 끊고서라도 반드시 재생(await 완료 후 종료 콜백)
     if (
@@ -134,67 +139,93 @@ export class CoachingEngine {
   }
 
   // 페이스/케이던스/경사 등 일반 코칭 — 목표/거리 이벤트는 checkDistanceEvents로 분리됨
-  async evaluate({ currentPaceSec, distanceKm, cadenceSpm, slope }) {
+  async evaluate({ elapsedSec, currentPaceSec, avgPaceSec, distanceKm, cadenceSpm, slope }) {
     if (this.goalReached) return;
+    if (elapsedSec != null) this.elapsedSec = elapsedSec;
 
     // 백업: GPS 콜백에서 이미 처리됐다면 여기선 조건 불충족으로 바로 반환됨
     await this.checkDistanceEvents({ distanceKm });
     if (this.goalReached) return;
 
-    const now = Date.now();
-    if (now < this.guardUntil) return; // v7: 재시작 직후엔 페이스 코칭 보류
+    const t = this.elapsedSec;
+    const { warmupSec, globalGapSec, checkinSec, sensSec, judgeBasis } = this.cfg;
 
-    // 페이스 없으면 idle_checkin만
-    if (!currentPaceSec || currentPaceSec <= 0) {
-      if (this._canSpeak('idle_checkin', now)) {
-        await this._playSituation('idle_checkin', now);
-      }
-      return;
-    }
+    if (t < warmupSec) return;                      // ① 시작 침묵(워밍업)
+    if (Date.now() < this.guardUntil) return;       // ①-b 재시작 멘트 우선 구간
+    if (this.isSpeaking) return;                    // ② 발화 중 금지
+    if (t - this.lastSpeakAtSec < globalGapSec) return; // ③ 전역 최소 간격
 
     // 경사 코칭
-    if (slope !== undefined && slope !== null) {
-      if (slope >= SLOPE_THRESHOLDS.uphill && this._canSpeak('uphill_detected', now)) {
-        await this._playSituation('uphill_detected', now);
-        return;
-      }
-      if (slope <= SLOPE_THRESHOLDS.downhill && this._canSpeak('downhill_detected', now)) {
-        await this._playSituation('downhill_detected', now);
-        return;
+    if (slope != null) {
+      if (slope >= SLOPE_THRESHOLDS.uphill) {
+        if (await this._trySay('uphill_detected')) return;
+      } else if (slope <= SLOPE_THRESHOLDS.downhill) {
+        if (await this._trySay('downhill_detected')) return;
       }
     }
 
     // 케이던스 코칭
-    if (cadenceSpm && cadenceSpm > 0 && cadenceSpm < CADENCE_THRESHOLD) {
-      if (this._canSpeak('cadence_low', now)) {
-        await this._playSituation('cadence_low', now);
-        return;
-      }
+    if (cadenceSpm > 0 && cadenceSpm < CADENCE_THRESHOLD) {
+      if (await this._trySay('cadence_low')) return;
     }
 
-    // 페이스 코칭
-    const ratio = currentPaceSec / this.targetPaceSec;
-    if (ratio < PACE_THRESHOLDS.tooFastRatio) {
-      if (this._canSpeak('pace_too_fast', now)) {
-        await this._playSituation('pace_too_fast', now);
-        return;
-      }
-    } else if (ratio > PACE_THRESHOLDS.tooSlowRatio) {
-      if (this._canSpeak('pace_too_slow', now)) {
-        await this._playSituation('pace_too_slow', now);
-        return;
-      }
+    // ④ 페이스 판단 — 현재 / 평균 / 혼합
+    let dev = null;
+    if (judgeBasis === 'avg') {
+      if (avgPaceSec > 0) dev = avgPaceSec - this.targetPaceSec;
+    } else if (judgeBasis === 'current') {
+      if (currentPaceSec > 0) dev = currentPaceSec - this.targetPaceSec;
     } else {
-      if (this._canSpeak('pace_on_target', now)) {
-        await this._playSituation('pace_on_target', now);
-        return;
+      // 혼합: 현재로 반응하되, 평균과 방향이 충돌하면(보정 중) 코칭을 보류한다
+      if (currentPaceSec > 0) {
+        const dc = currentPaceSec - this.targetPaceSec;
+        const da = avgPaceSec > 0 ? avgPaceSec - this.targetPaceSec : dc;
+        dev =
+          Math.sign(dc) !== Math.sign(da) && Math.abs(dc) > sensSec && Math.abs(da) > sensSec
+            ? 0
+            : dc;
       }
     }
 
-    // 주기적 idle_checkin
-    if (this._canSpeak('idle_checkin', now)) {
-      await this._playSituation('idle_checkin', now);
+    if (dev != null) {
+      this.recentDev.push(dev);
+      if (this.recentDev.length > 3) this.recentDev.shift();
+      const sustained =
+        this.recentDev.length >= 2 &&
+        this.recentDev.every((x) => Math.abs(x) > sensSec && Math.sign(x) === Math.sign(dev));
+
+      if (sustained) {
+        this.wasDeviated = true;
+        if (await this._trySay(dev < 0 ? 'pace_too_fast' : 'pace_too_slow')) {
+          this.recentDev = [];
+          return;
+        }
+      }
+      if (this.wasDeviated && Math.abs(dev) <= sensSec) {
+        this.wasDeviated = false;
+        if (await this._trySay('pace_recovered')) return;
+      }
+      if (Math.abs(dev) <= sensSec && t - this.lastSpeakAtSec > checkinSec * 0.8) {
+        if (await this._trySay('pace_on_target')) return;
+      }
     }
+
+    // ⑥ 주기적 체크인 (최하위)
+    if (t - this.lastSpeakAtSec > checkinSec) await this._trySay('idle_checkin');
+  }
+
+  // 쿨다운을 확인하고 발화 — 발화했으면 true (v10의 firePool과 같은 계약)
+  async _trySay(situationId) {
+    if (this.isSpeaking) return false;
+    const situation = SITUATIONS[situationId];
+    if (!situation) return false;
+    // 체크인 간격은 설정값이 상황 쿨다운보다 우선한다
+    const cooldown =
+      situationId === 'idle_checkin' ? this.cfg.checkinSec : situation.cooldown_sec;
+    const last = this.lastSpoken[situationId];
+    if (last != null && (Date.now() - last) / 1000 < cooldown) return false;
+    await this._playVariant(situationId, Date.now());
+    return true;
   }
 
   async sayStart() {
@@ -211,12 +242,12 @@ export class CoachingEngine {
     await this._playSituationForced('resume', Date.now());
   }
 
-  _canSpeak(situationId, now) {
-    if (this.isSpeaking) return false;
-    const situation = SITUATIONS[situationId];
-    if (!situation) return false;
-    const last = this.lastSpoken[situationId] || 0;
-    return (now - last) / 1000 >= situation.cooldown_sec;
+  setMuted(muted) {
+    this.muted = muted;
+    if (muted) {
+      Speech.stop();
+      if (this.sound) this.sound.setStatusAsync({ volume: 0 }).catch(() => {});
+    }
   }
 
   async _playSituation(situationId, now) {
@@ -245,18 +276,32 @@ export class CoachingEngine {
     const audioKeys = situation.audioKeys?.[this.persona] || [];
     const texts = situation.variants?.[this.persona] || [];
 
-    const lastIdx = this.lastVariantIndex[situationId] ?? -1;
     const count = Math.max(audioKeys.length, texts.length);
-    let idx = lastIdx;
-    if (count > 1) {
-      while (idx === lastIdx) idx = Math.floor(Math.random() * count);
-    } else {
-      idx = 0;
-    }
-    this.lastVariantIndex[situationId] = idx;
+    const idx = this._pickIndex(situationId, count);
     this.lastSpoken[situationId] = now;
 
     return { audioKey: audioKeys[idx] ?? audioKeys[0], text: texts[idx] ?? texts[0] };
+  }
+
+  // v6 셔플백: 한 상황의 모든 변형을 소진하기 전엔 같은 멘트를 반복하지 않는다
+  _pickIndex(key, count) {
+    if (count <= 1) return 0;
+    let bag = this.bags[key];
+    if (!bag || bag.length === 0) {
+      bag = [...Array(count).keys()];
+      for (let i = bag.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [bag[i], bag[j]] = [bag[j], bag[i]];
+      }
+      // 백 경계에서도 직전 멘트와 겹치지 않게
+      if (bag[0] === this.lastVariantIndex[key] && bag.length > 1) {
+        [bag[0], bag[1]] = [bag[1], bag[0]];
+      }
+      this.bags[key] = bag;
+    }
+    const idx = bag.shift();
+    this.lastVariantIndex[key] = idx;
+    return idx;
   }
 
   async _playVariant(situationId, now) {
@@ -279,11 +324,22 @@ export class CoachingEngine {
 
   // 병합 멘트도 러너에겐 한 번의 발화 — 클립 수가 아니라 발화 단위로 로그를 남긴다
   _report(situationId, items) {
-    if (!this.onSpeak) return;
+    this.lastSpeakAtSec = this.elapsedSec; // 전역 발화 간격 기준
     const withClip = items.filter((it) => it && audioMap[it.audioKey]).length;
-    const src = withClip === items.length ? 'clip' : withClip === 0 ? 'tts' : 'mixed';
+    const src = this.muted
+      ? 'mute'
+      : withClip === items.length
+        ? 'clip'
+        : withClip === 0
+          ? 'tts'
+          : 'mixed';
     const text = items.map((it) => it?.text).filter(Boolean).join(' ');
-    this.onSpeak({ sit: situationId, text, src });
+    this.onSpeak?.({ sit: situationId, text, src });
+    this.onStateChange?.({ speaking: true, text, sit: situationId });
+  }
+
+  _finishedSpeaking() {
+    this.onStateChange?.({ speaking: false });
   }
 
   // v9: 병합 멘트 — 새로 합성하지 않고 기존 클립 여러 개를 순서대로 이어 재생
@@ -299,7 +355,10 @@ export class CoachingEngine {
         await this._playOne(item.audioKey, item.text, token);
       }
     } finally {
-      if (this.playToken === token) this.isSpeaking = false;
+      if (this.playToken === token) {
+        this.isSpeaking = false;
+        this._finishedSpeaking();
+      }
     }
   }
 
@@ -311,12 +370,20 @@ export class CoachingEngine {
     try {
       await this._playOne(audioKey, ttsText, token);
     } finally {
-      if (this.playToken === token) this.isSpeaking = false;
+      if (this.playToken === token) {
+        this.isSpeaking = false;
+        this._finishedSpeaking();
+      }
     }
   }
 
   // isSpeaking 가드 없이 클립 하나 재생 (단일 재생·시퀀스 재생 공용)
   async _playOne(audioKey, ttsText, token) {
+    // 음소거 — 로그·말풍선은 남기되 소리는 내지 않는다 (말풍선이 깜빡이지 않게 잠깐 유지)
+    if (this.muted) {
+      await new Promise((r) => setTimeout(r, 1200));
+      return;
+    }
     try {
       const source = audioKey ? audioMap[audioKey] : null;
       if (source) {

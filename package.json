@@ -7,6 +7,7 @@
     "@react-navigation/native": "^7.3.3",
     "@react-navigation/stack": "^7.10.5",
     "expo": "~56.0.12",
+    "expo-asset": "~56.0.21",
     "expo-av": "^16.0.8",
     "expo-keep-awake": "~56.0.3",
     "expo-location": "~56.0.18",

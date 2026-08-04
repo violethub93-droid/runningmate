@@ -25,6 +25,7 @@ export default function SetupScreen({ navigation }) {
     warmupSec: DEFAULTS.warmupSec,
     pauseSec: DEFAULTS.pauseSec,
     resumeSec: DEFAULTS.resumeSec,
+    bgmBpm: DEFAULTS.bgmBpm,
   });
   const [history, setHistory] = useState([]);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -174,6 +175,11 @@ export default function SetupScreen({ navigation }) {
           <Seg label="시작 침묵(워밍업)" field="warmupSec" />
           <Seg label="정지 감지" hint="멈춤 인식 시간 (짧을수록 빨리 멈춤)" field="pauseSec" />
           <Seg label="재시작 감지" hint="다시 뛸 때 반응 (둔감할수록 덜 예민)" field="resumeSec" />
+          <Seg
+            label="BGM (케이던스 BPM)"
+            hint="발걸음을 끌어올리는 배경음 · 멘트 때 자동으로 낮아짐"
+            field="bgmBpm"
+          />
         </View>
 
         <TouchableOpacity style={styles.startBtn} onPress={handleStart}>

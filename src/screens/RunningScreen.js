@@ -14,6 +14,7 @@ import {
 import {
   DEFAULTS, PAUSE_SPEED_MPS, RESUME_SPEED_MPS, BASIS_LABEL, paceLabel, clockLabel,
 } from '../data/settings';
+import { BgmPlayer } from '../audio/BgmPlayer';
 import { C } from '../theme';
 
 const SAMPLE_EVERY_SEC = 3;        // 러닝 로그 샘플 주기
@@ -76,6 +77,10 @@ export default function RunningScreen({ route, navigation }) {
   const runLogRef = useRef(null);
   const gpsAccuracyRef = useRef(null);
   const pauseStartMsRef = useRef(0);
+
+  // 케이던스 동기화 BGM
+  const bgmRef = useRef(null);
+  const [bgmOn, setBgmOn] = useState(false);
 
   // 말풍선 웨이브 애니메이션
   const wave = useRef(new Animated.Value(0)).current;
@@ -295,6 +300,7 @@ export default function RunningScreen({ route, navigation }) {
     pausedMantraAtRef.current = Date.now();
     stopTimer();
     beginPauseLog(reason);
+    bgmRef.current?.pause();
     if (reason === 'manual') {
       // 수동 정지는 센서까지 내린다 (배터리)
       locationSubscriptionRef.current?.remove();
@@ -318,6 +324,7 @@ export default function RunningScreen({ route, navigation }) {
       lastAbovePauseMsRef.current = Date.now();
       endPauseLog();
       startTimer();
+      bgmRef.current?.resume();
       await subscribeSensors();
       await engineRef.current?.sayResume();
     } finally {
@@ -360,8 +367,18 @@ export default function RunningScreen({ route, navigation }) {
           );
           setSpeechLog((prev) => [{ t, sit, text, src }, ...prev].slice(0, MAX_LOG));
         },
-        onStateChange: ({ speaking: sp }) => setSpeaking(sp),
+        onStateChange: ({ speaking: sp }) => {
+          setSpeaking(sp);
+          bgmRef.current?.setDucked(sp); // 멘트가 나가는 동안 배경음을 낮춘다
+        },
       });
+
+      // BGM은 발화와 독립적으로 시작 (실패해도 러닝에는 영향 없음)
+      if (cfg.bgmBpm) {
+        bgmRef.current = new BgmPlayer();
+        bgmRef.current.start(cfg.bgmBpm).then((ok) => setBgmOn(ok));
+      }
+
       await engineRef.current.sayStart();
 
       startTimer();
@@ -413,6 +430,8 @@ export default function RunningScreen({ route, navigation }) {
     accelSubscriptionRef.current?.remove();
     const goalReached = !!engineRef.current?.goalReached;
     await engineRef.current?.destroy();
+    await bgmRef.current?.stop();
+    bgmRef.current = null;
     deactivateKeepAwake();
     Vibration.vibrate(200);
 
@@ -450,6 +469,7 @@ export default function RunningScreen({ route, navigation }) {
       locationSubscriptionRef.current?.remove();
       accelSubscriptionRef.current?.remove();
       engineRef.current?.destroy();
+      bgmRef.current?.stop();
       deactivateKeepAwake();
     };
   }, []);
@@ -509,6 +529,14 @@ export default function RunningScreen({ route, navigation }) {
             <Text style={styles.debugKey}>  오디오 </Text>
             <Text style={{ color: C.good }}>{audioStat.clip}</Text>/
             <Text style={{ color: C.bad }}>{audioStat.tts}</Text>
+            {cfg.bgmBpm ? (
+              <>
+                <Text style={styles.debugKey}>  BGM </Text>
+                <Text style={{ color: bgmOn ? (speaking ? C.blue : C.good) : C.bad }}>
+                  {bgmOn ? `${cfg.bgmBpm}${speaking ? ' 낮춤' : ''}` : '실패'}
+                </Text>
+              </>
+            ) : null}
           </Text>
         </View>
 

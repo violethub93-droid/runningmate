@@ -13,6 +13,7 @@ export const DEFAULTS = {
   warmupSec: 30,           // 시작 후 침묵 구간
   pauseSec: 10,            // 이 시간만큼 저속 지속 시 자동 일시정지
   resumeSec: 2.5,          // 이 시간만큼 이동 지속 시 자동 재시작
+  bgmBpm: 0,               // 케이던스 동기화 BGM (0 = 끄기)
 };
 
 // 자동 일시정지/재시작 속도 임계 — 분리해서 히스테리시스를 만든다(걷기엔 안 멈추게)
@@ -62,6 +63,13 @@ export const OPTIONS = {
     { v: 1.5, label: '민감 1.5초' },
     { v: 2.5, label: '보통 2.5초' },
     { v: 4, label: '둔감 4초' },
+  ],
+  bgmBpm: [
+    { v: 0, label: '끄기' },
+    { v: 150, label: '150' },
+    { v: 160, label: '160' },
+    { v: 170, label: '170' },
+    { v: 180, label: '180' },
   ],
 };
 

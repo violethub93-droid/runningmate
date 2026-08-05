@@ -18,9 +18,11 @@ const SOURCES = {
 
 export const BGM_LEVEL = 0.35;  // 평상시 볼륨
 export const BGM_DUCK = 0.10;   // 발화 중 볼륨
+export const BGM_STANDBY = 0.12; // 자동 일시정지(신호 대기 등) — 완전히 끄지 않고 낮춰만 둔다
 const FADE_IN_MS = 1200;
 const DUCK_DOWN_MS = 250;       // 말 시작 — 빠르게 비켜준다
 const DUCK_UP_MS = 800;         // 말 끝 — 천천히 돌아온다
+const WATCHDOG_MS = 2000;       // AudioContext가 죽었는지 주기적으로 확인
 
 export class BgmPlayer {
   constructor() {
@@ -29,6 +31,9 @@ export class BgmPlayer {
     this.stopped = false;
     this.ducked = false;
     this.paused = false;
+    this.standby = false;   // 자동 일시정지 — 끄지 않고 낮추기만
+    this.watchdog = null;
+    this.onVisible = null;
     // web
     this.ctx = null; this.gain = null; this.node = null; this.buffer = null;
     // native
@@ -77,6 +82,36 @@ export class BgmPlayer {
     this.node.connect(this.gain);
     this.node.start();
     this._rampWeb(this._target(), FADE_IN_MS);
+    this._watch();
+  }
+
+  // 브라우저가 AudioContext를 임의로 중단시키는 상황을 되살린다.
+  // 화면 꺼짐·알림·앱 전환은 물론, 멘트(HTMLAudio)가 오디오 포커스를 가져갈 때도
+  // 컨텍스트가 suspended로 떨어지는데, 그대로 두면 BGM이 영영 돌아오지 않는다.
+  _watch() {
+    if (!this.isWeb || !this.ctx) return;
+    const revive = () => {
+      if (this.stopped || !this.ctx) return;
+      if (this.ctx.state === 'suspended') {
+        this.ctx.resume()
+          .then(() => this._rampWeb(this._target(), 300))
+          .catch(() => {});
+      }
+    };
+    this.ctx.onstatechange = revive;
+    this.watchdog = setInterval(revive, WATCHDOG_MS);
+    this.onVisible = () => { if (!document.hidden) revive(); };
+    document.addEventListener('visibilitychange', this.onVisible);
+  }
+
+  _unwatch() {
+    clearInterval(this.watchdog);
+    this.watchdog = null;
+    if (this.onVisible) {
+      document.removeEventListener('visibilitychange', this.onVisible);
+      this.onVisible = null;
+    }
+    if (this.ctx) this.ctx.onstatechange = null;
   }
 
   async _startNative(bpm) {
@@ -123,7 +158,7 @@ export class BgmPlayer {
   // 정지 상태가 덕킹보다 우선한다.
   // (정지 직후 재정비 멘트가 나가면서 덕킹이 걸리는데, 그때 볼륨이 되살아나면 안 됨)
   _target() {
-    if (this.paused) return 0;
+    if (this.paused) return this.standby ? BGM_STANDBY : 0;
     return this.ducked ? BGM_DUCK : BGM_LEVEL;
   }
 
@@ -135,18 +170,28 @@ export class BgmPlayer {
     this._ramp(this._target(), on ? DUCK_DOWN_MS : DUCK_UP_MS);
   }
 
-  pause() {
+  // 자동 일시정지(신호 대기)는 음악을 낮추기만 하고, 수동 일시정지는 완전히 멈춘다.
+  // 횡단보도에서 몇 초 서는데 음악이 통째로 끊겼다 다시 시작하면 오히려 거슬린다.
+  pause(reason) {
     if (this.paused) return;
     this.paused = true;
+    this.standby = reason === 'auto';
     if (!this.ready) return;
-    if (this.isWeb) this._rampWeb(0, 400);
-    else { this._fadeNative(0, 400); setTimeout(() => this.sound?.pauseAsync().catch(() => {}), 450); }
+    const target = this._target();
+    if (this.isWeb) this._rampWeb(target, 400);
+    else {
+      this._fadeNative(target, 400);
+      if (!this.standby) setTimeout(() => this.sound?.pauseAsync().catch(() => {}), 450);
+    }
   }
 
   resume() {
     if (!this.paused) return;
+    const wasStandby = this.standby;
     this.paused = false;
+    this.standby = false;
     if (!this.ready) return;
+    if (wasStandby) { this._ramp(this._target(), 800); return; } // 계속 재생 중이었으므로 볼륨만 복구
     if (this.isWeb) {
       this.ctx?.resume().catch(() => {});
       this._rampWeb(this._target(), 800);
@@ -159,6 +204,7 @@ export class BgmPlayer {
   async stop() {
     this.stopped = true;
     this.ready = false;
+    this._unwatch();
     clearInterval(this.fadeTimer);
     this.fadeTimer = null;
     if (this.isWeb) {

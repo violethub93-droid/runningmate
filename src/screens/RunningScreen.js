@@ -300,7 +300,7 @@ export default function RunningScreen({ route, navigation }) {
     pausedMantraAtRef.current = Date.now();
     stopTimer();
     beginPauseLog(reason);
-    bgmRef.current?.pause();
+    bgmRef.current?.pause(reason);
     if (reason === 'manual') {
       // 수동 정지는 센서까지 내린다 (배터리)
       locationSubscriptionRef.current?.remove();

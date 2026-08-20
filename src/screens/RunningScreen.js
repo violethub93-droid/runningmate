@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  SafeAreaView, StatusBar, Vibration, ScrollView, Animated, Easing,
+  SafeAreaView, StatusBar, Vibration, ScrollView, Animated, Easing, Platform,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Accelerometer } from 'expo-sensors';
@@ -24,6 +24,14 @@ const PACE_BUF = 5;                // 페이스 중앙값 스무딩 창
 const PAUSED_MANTRA_MS = 50000;    // 정지 상태에서 재정비 멘트 반복 간격
 const PAUSED_MANTRA_MAX = 3;       // 재정비 멘트는 이 횟수까지만 (계속 반복하면 잔소리)
 const GPS_STALE_MS = 15000;        // 이 시간 동안 위치가 안 들어오면 'GPS 없음'으로 본다
+// ★웹에서는 expo-location의 watchPositionAsync가 첫 위치를 받은 뒤 스스로 watch를
+// 해제해 버려(생성 id == 해제 id 확인) 사실상 1회용이다. 그래서 웹은 폴링이 주 수단이고,
+// 네이티브는 watch가 정상 동작하므로 폴링을 느슨한 안전망으로만 둔다.
+const IS_WEB = Platform.OS === 'web';
+const GPS_POLL_MS = IS_WEB ? 1500 : 3000;        // 위치를 직접 요청하는 주기
+const GPS_POLL_AFTER_MS = IS_WEB ? 1200 : 5000;  // 마지막 수신이 이보다 오래되면 요청
+const GPS_POLL_MAX_AGE = IS_WEB ? 1000 : 2000;
+const GPS_ACC_LIMIT_M = 40;        // 이보다 부정확한 표본은 거리 계산에 쓰지 않는다
 const MAX_LOG = 30;
 
 const median = (arr) => {
@@ -66,6 +74,11 @@ export default function RunningScreen({ route, navigation }) {
   const lastFixMsRef = useRef(0);      // 마지막으로 위치를 받은 시각
   const staleLoggedRef = useRef(false);
   const mantraCountRef = useRef(0);
+  // watch가 죽는 기기가 있어 폴링으로 위치를 보강한다
+  const gpsFixFnRef = useRef(null);
+  const gpsPollTimerRef = useRef(null);
+  const gpsPollBusyRef = useRef(false);
+  const fixSrcRef = useRef({ watch: 0, poll: 0, rejected: 0 });
   const moveStreakStartRef = useRef(0);
   const pausedMantraAtRef = useRef(0);
 
@@ -157,11 +170,14 @@ export default function RunningScreen({ route, navigation }) {
     }
   }, []);
 
-  // GPS 문제를 로그에 남긴다 — 현장에서 무슨 일이 있었는지 사후에 알 수 있게
-  const noteGpsProblem = (msg) => {
+  // GPS 문제를 로그에 남긴다 — 현장에서 무슨 일이 있었는지 사후에 알 수 있게.
+  // once=true면 같은 메시지는 한 번만 남긴다(폴링 실패가 매초 쌓이는 것 방지).
+  const noteGpsProblem = (msg, once = false) => {
     const log = runLogRef.current;
     if (!log) return;
-    (log.issues ||= []).push({ t: Math.round(elapsedSecRef.current), msg });
+    log.issues ||= [];
+    if (once && log.issues.some((i) => i.msg === msg)) return;
+    log.issues.push({ t: Math.round(elapsedSecRef.current), msg });
   };
 
   // 정지 구간 기록 — 자동↔수동 전환으로 구간이 겹쳐도 열린 구간을 먼저 닫는다
@@ -260,15 +276,18 @@ export default function RunningScreen({ route, navigation }) {
   };
 
   // GPS 콜백 — 속도는 기기 제공값 대신 위치 델타로 계산(coords.speed가 null인 기기 대응)
-  const makeGpsCallback = () => (loc) => {
+  const makeGpsCallback = (source = 'watch') => (loc) => {
+    if (!loc?.coords) return;
     const acc = loc.coords.accuracy;
     gpsAccuracyRef.current = acc;
     lastFixMsRef.current = Date.now();
+    fixSrcRef.current[source] = (fixSrcRef.current[source] || 0) + 1;
     setAccuracyM(acc);
     setGpsStale(false);
 
     // 정확도가 너무 나쁜 표본은 거리·페이스에 반영하지 않는다
-    if (acc != null && acc > 30) {
+    if (acc != null && acc > GPS_ACC_LIMIT_M) {
+      fixSrcRef.current.rejected += 1;
       prevLocationRef.current = loc;
       return;
     }
@@ -339,6 +358,7 @@ export default function RunningScreen({ route, navigation }) {
     bgmRef.current?.pause(reason);
     if (reason === 'manual') {
       // 수동 정지는 센서까지 내린다 (배터리)
+      stopGpsBackstop();
       locationSubscriptionRef.current?.remove();
       locationSubscriptionRef.current = null;
       accelSubscriptionRef.current?.remove();
@@ -428,24 +448,53 @@ export default function RunningScreen({ route, navigation }) {
     }
   };
 
+  // watch가 콜백을 주지 않는 기기가 있다(브라우저 무관). 그럴 때 직접 위치를 요청해 메운다.
+  // 폴링만으로도 3초 간격이면 거리·페이스 계산에 충분하다.
+  const startGpsBackstop = () => {
+    if (gpsPollTimerRef.current) return;
+    gpsPollTimerRef.current = setInterval(async () => {
+      if (gpsPollBusyRef.current) return;
+      if (Date.now() - lastFixMsRef.current < GPS_POLL_AFTER_MS) return; // watch가 살아있으면 쉰다
+      gpsPollBusyRef.current = true;
+      try {
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+          maximumAge: GPS_POLL_MAX_AGE,
+        });
+        gpsFixFnRef.current?.('poll')(loc);
+      } catch (e) {
+        noteGpsProblem('위치 요청 실패: ' + (e?.message || e), true);
+      } finally {
+        gpsPollBusyRef.current = false;
+      }
+    }, GPS_POLL_MS);
+  };
+
+  const stopGpsBackstop = () => {
+    clearInterval(gpsPollTimerRef.current);
+    gpsPollTimerRef.current = null;
+  };
+
   // GPS·가속도 구독 — 한쪽이 실패해도 나머지와 코칭 루프는 계속 살아있게 한다
   const subscribeSensors = async () => {
     if (!locationSubscriptionRef.current) {
-      const onFix = makeGpsCallback();
+      gpsFixFnRef.current = makeGpsCallback;
+      const onWatchFix = makeGpsCallback('watch');
       // 첫 측위를 먼저 강제한다 — watch만 걸면 기기에 따라 콜백이 한 번도 안 올 수 있다
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-        .then(onFix)
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
+        .then(makeGpsCallback('poll'))
         .catch((e) => noteGpsProblem('첫 측위 실패: ' + (e?.message || e)));
+      startGpsBackstop();
       try {
         locationSubscriptionRef.current = await Location.watchPositionAsync(
-          // distanceInterval을 두지 않는다 — 기기에 따라 이 필터가 콜백을 통째로 막는다
-          { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS },
-          onFix,
+          // distanceInterval을 두지 않는다 — 기기에 따라 이 필터가 콜백을 통째로 막는다.
+          // BestForNavigation은 GPS 락을 기다리다 영영 콜백이 안 오는 사례가 있어 High를 쓴다.
+          { accuracy: Location.Accuracy.High, timeInterval: GPS_UPDATE_MS },
+          onWatchFix,
           (e) => noteGpsProblem('위치 구독 오류: ' + (e?.message || e))
         );
       } catch (e) {
         noteGpsProblem('위치 구독 실패: ' + (e?.message || e));
-        setLocationError('위치 정보를 받지 못했어요. 권한과 GPS를 확인해주세요.');
       }
     }
     if (!accelSubscriptionRef.current) {
@@ -470,6 +519,7 @@ export default function RunningScreen({ route, navigation }) {
   const finishRun = useCallback(async () => {
     stopTimer();
     stopCoachingLoop();
+    stopGpsBackstop();
     locationSubscriptionRef.current?.remove();
     accelSubscriptionRef.current?.remove();
     const goalReached = !!engineRef.current?.goalReached;
@@ -484,6 +534,8 @@ export default function RunningScreen({ route, navigation }) {
     const avgPaceSec = elapsed > 0 && dist > 0 ? Math.round(elapsed / dist) : 0;
 
     endPauseLog();
+    // 위치를 watch로 받았는지 폴링으로 받았는지 남긴다 — 기기별 GPS 문제 진단용
+    if (runLogRef.current) runLogRef.current.gpsFixes = { ...fixSrcRef.current };
     const log = finalizeRunLog(runLogRef.current, {
       elapsedSec: elapsed,
       distanceKm: dist,
@@ -510,6 +562,7 @@ export default function RunningScreen({ route, navigation }) {
     return () => {
       stopTimer();
       stopCoachingLoop();
+      stopGpsBackstop();
       locationSubscriptionRef.current?.remove();
       accelSubscriptionRef.current?.remove();
       engineRef.current?.destroy();
@@ -570,6 +623,10 @@ export default function RunningScreen({ route, navigation }) {
             <Text style={styles.debugKey}>원시 </Text>{paceLabel(rawPaceSec)}
             <Text style={styles.debugKey}>  정확도 </Text>{accuracyM == null ? '--' : Math.round(accuracyM)}m
             <Text style={styles.debugKey}>  {st.tag} </Text>{st.left}
+            <Text style={styles.debugKey}>  위치 </Text>
+            <Text style={{ color: fixSrcRef.current.watch > 0 ? C.good : C.warm }}>
+              {fixSrcRef.current.watch}/{fixSrcRef.current.poll}
+            </Text>
             <Text style={styles.debugKey}>  오디오 </Text>
             <Text style={{ color: C.good }}>{audioStat.clip}</Text>/
             <Text style={{ color: C.bad }}>{audioStat.tts}</Text>

@@ -22,6 +22,8 @@ const COACHING_INTERVAL_MS = 3000; // 코칭 판단 주기
 const GPS_UPDATE_MS = 1000;
 const PACE_BUF = 5;                // 페이스 중앙값 스무딩 창
 const PAUSED_MANTRA_MS = 50000;    // 정지 상태에서 재정비 멘트 반복 간격
+const PAUSED_MANTRA_MAX = 3;       // 재정비 멘트는 이 횟수까지만 (계속 반복하면 잔소리)
+const GPS_STALE_MS = 15000;        // 이 시간 동안 위치가 안 들어오면 'GPS 없음'으로 본다
 const MAX_LOG = 30;
 
 const median = (arr) => {
@@ -42,6 +44,7 @@ export default function RunningScreen({ route, navigation }) {
   const [currentPaceSec, setCurrentPaceSec] = useState(0);
   const [rawPaceSec, setRawPaceSec] = useState(0);
   const [accuracyM, setAccuracyM] = useState(null);
+  const [gpsStale, setGpsStale] = useState(false);
   const [cadenceSpm, setCadenceSpm] = useState(0);
   const [muted, setMuted] = useState(false);
   const [audioStat, setAudioStat] = useState({ clip: 0, tts: 0 });
@@ -60,6 +63,9 @@ export default function RunningScreen({ route, navigation }) {
   // 자동 일시정지 — 히스테리시스(정지·재시작 임계 분리 + 지속 시간 요구)
   const isPausedRef = useRef(false);
   const lastAbovePauseMsRef = useRef(0);
+  const lastFixMsRef = useRef(0);      // 마지막으로 위치를 받은 시각
+  const staleLoggedRef = useRef(false);
+  const mantraCountRef = useRef(0);
   const moveStreakStartRef = useRef(0);
   const pausedMantraAtRef = useRef(0);
 
@@ -100,6 +106,8 @@ export default function RunningScreen({ route, navigation }) {
 
   const gpsBadge = () => {
     if (isPaused) return { text: pauseReason === 'auto' ? '자동 일시정지' : '일시정지', color: C.blue };
+    // 위치가 끊긴 상태를 명확히 알린다 — 이 동안은 거리·페이스가 쌓이지 않는다
+    if (gpsStale) return { text: accuracyM == null ? '⚠ GPS 신호 없음' : '⚠ GPS 끊김', color: C.bad };
     if (accuracyM == null) return { text: 'GPS 잡는 중…', color: C.bad };
     if (accuracyM <= 12) return { text: 'GPS 양호', color: C.good };
     if (accuracyM <= 25) return { text: 'GPS 보통', color: C.warm };
@@ -149,6 +157,13 @@ export default function RunningScreen({ route, navigation }) {
     }
   }, []);
 
+  // GPS 문제를 로그에 남긴다 — 현장에서 무슨 일이 있었는지 사후에 알 수 있게
+  const noteGpsProblem = (msg) => {
+    const log = runLogRef.current;
+    if (!log) return;
+    (log.issues ||= []).push({ t: Math.round(elapsedSecRef.current), msg });
+  };
+
   // 정지 구간 기록 — 자동↔수동 전환으로 구간이 겹쳐도 열린 구간을 먼저 닫는다
   const endPauseLog = () => {
     if (!pauseStartMsRef.current) return;
@@ -193,16 +208,34 @@ export default function RunningScreen({ route, navigation }) {
     if (coachingTimerRef.current) return;
     coachingTimerRef.current = setInterval(async () => {
       if (!engineRef.current) return;
+      // 위치가 안 들어오는 상태 — '멈춰 있음'과 구별해야 한다
+      const fixStale = !lastFixMsRef.current || Date.now() - lastFixMsRef.current > GPS_STALE_MS;
+      setGpsStale(fixStale);
+      // 오류도 없이 조용히 끊기는 경우가 있어, 상태 전환 자체를 기록해 둔다
+      if (fixStale !== staleLoggedRef.current) {
+        staleLoggedRef.current = fixStale;
+        noteGpsProblem(fixStale ? 'GPS 수신 끊김' : 'GPS 수신 복구');
+      }
+
       if (isPausedRef.current) {
-        // 정지 상태에서는 주기적으로 재정비 멘트만
-        if (!engineRef.current.isSpeaking && Date.now() - pausedMantraAtRef.current > PAUSED_MANTRA_MS) {
+        // 정지 상태에서는 주기적으로 재정비 멘트만 — 단, 몇 번까지만
+        if (
+          !engineRef.current.isSpeaking &&
+          mantraCountRef.current < PAUSED_MANTRA_MAX &&
+          Date.now() - pausedMantraAtRef.current > PAUSED_MANTRA_MS
+        ) {
           pausedMantraAtRef.current = Date.now();
+          mantraCountRef.current += 1;
           await engineRef.current.sayPaused();
         }
         return;
       }
-      // 자동 일시정지 판정 — 저속이 설정 시간만큼 지속됐을 때만
+
+      // 자동 일시정지 판정 — 저속이 설정 시간만큼 지속됐을 때만.
+      // ★위치 자체가 안 들어오면 멈춘 게 아니라 GPS 문제다. 이때 정지시키면
+      //  달리는 내내 시간·거리가 멈추고 재정비 멘트만 반복된다(2026-08-19 현장 사례).
       if (
+        !fixStale &&
         elapsedSecRef.current > cfg.warmupSec &&
         lastAbovePauseMsRef.current &&
         Date.now() - lastAbovePauseMsRef.current > cfg.pauseSec * 1000
@@ -230,7 +263,9 @@ export default function RunningScreen({ route, navigation }) {
   const makeGpsCallback = () => (loc) => {
     const acc = loc.coords.accuracy;
     gpsAccuracyRef.current = acc;
+    lastFixMsRef.current = Date.now();
     setAccuracyM(acc);
+    setGpsStale(false);
 
     // 정확도가 너무 나쁜 표본은 거리·페이스에 반영하지 않는다
     if (acc != null && acc > 30) {
@@ -298,6 +333,7 @@ export default function RunningScreen({ route, navigation }) {
     setPauseReason(reason);
     moveStreakStartRef.current = 0;
     pausedMantraAtRef.current = Date.now();
+    mantraCountRef.current = 0;   // 새 정지 구간마다 재정비 멘트 횟수 초기화
     stopTimer();
     beginPauseLog(reason);
     bgmRef.current?.pause(reason);
@@ -395,12 +431,20 @@ export default function RunningScreen({ route, navigation }) {
   // GPS·가속도 구독 — 한쪽이 실패해도 나머지와 코칭 루프는 계속 살아있게 한다
   const subscribeSensors = async () => {
     if (!locationSubscriptionRef.current) {
+      const onFix = makeGpsCallback();
+      // 첫 측위를 먼저 강제한다 — watch만 걸면 기기에 따라 콜백이 한 번도 안 올 수 있다
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        .then(onFix)
+        .catch((e) => noteGpsProblem('첫 측위 실패: ' + (e?.message || e)));
       try {
         locationSubscriptionRef.current = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS, distanceInterval: 3 },
-          makeGpsCallback()
+          // distanceInterval을 두지 않는다 — 기기에 따라 이 필터가 콜백을 통째로 막는다
+          { accuracy: Location.Accuracy.BestForNavigation, timeInterval: GPS_UPDATE_MS },
+          onFix,
+          (e) => noteGpsProblem('위치 구독 오류: ' + (e?.message || e))
         );
-      } catch {
+      } catch (e) {
+        noteGpsProblem('위치 구독 실패: ' + (e?.message || e));
         setLocationError('위치 정보를 받지 못했어요. 권한과 GPS를 확인해주세요.');
       }
     }

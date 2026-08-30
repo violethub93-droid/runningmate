@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 // 코칭 파라미터 — 정적 프로토타입 v10의 설정 UI와 동일한 항목·기본값.
 // 3차 현장 테스트에서 확정된 고정 기본값(민감도 보통·체크인 75초·시작 침묵 30초·전역 간격 20초)을 따른다.
 // Setup 화면과 엔진이 같은 정의를 참조하도록 여기 한 곳에만 둔다.
@@ -78,6 +80,46 @@ export const BASIS_LABEL = {
   blend: '현재+평균 혼합 판단',
   avg: '평균 페이스 기준 판단',
 };
+
+// 마지막에 쓴 설정을 기억한다 — 현장에서 매번 7개 항목을 다시 고르지 않게.
+const SETTINGS_KEY = 'rm_settings_v1';
+
+export async function loadSettings() {
+  try {
+    const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+    if (!raw) return { ...DEFAULTS };
+    const saved = JSON.parse(raw);
+    // 저장된 값 중 현재 정의에 있는 키만 채택 (스키마가 바뀌어도 안전하게)
+    const out = { ...DEFAULTS };
+    for (const k of Object.keys(DEFAULTS)) {
+      if (saved[k] !== undefined) out[k] = saved[k];
+    }
+    return out;
+  } catch {
+    return { ...DEFAULTS };
+  }
+}
+
+export async function saveSettings(cfg) {
+  try {
+    await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg));
+  } catch {
+    /* 저장 실패는 러닝을 막을 이유가 아니다 */
+  }
+}
+
+// 기본값과 다른 항목만 골라 요약 문자열로 (접힌 상태에서 무엇이 바뀌었는지 보여주기 위해)
+export function changedSummary(cfg) {
+  const label = (field, v) => OPTIONS[field]?.find((o) => o.v === v)?.label ?? String(v);
+  const names = {
+    judgeBasis: '판단', sensSec: '민감도', globalGapSec: '발화간격',
+    checkinSec: '체크인', warmupSec: '워밍업', pauseSec: '정지', resumeSec: '재시작',
+  };
+  const diffs = Object.keys(names)
+    .filter((k) => cfg[k] !== DEFAULTS[k])
+    .map((k) => `${names[k]} ${label(k, cfg[k])}`);
+  return diffs;
+}
 
 export function paceLabel(sec) {
   if (!sec || sec <= 0) return "--'--";

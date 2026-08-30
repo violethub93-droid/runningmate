@@ -32,6 +32,14 @@ const GPS_POLL_MS = IS_WEB ? 1500 : 3000;        // 위치를 직접 요청하�
 const GPS_POLL_AFTER_MS = IS_WEB ? 1200 : 5000;  // 마지막 수신이 이보다 오래되면 요청
 const GPS_POLL_MAX_AGE = IS_WEB ? 1000 : 2000;
 const GPS_ACC_LIMIT_M = 40;        // 이보다 부정확한 표본은 거리 계산에 쓰지 않는다
+// ★이동/정지 판정은 인접 측위 간 순간 속도가 아니라 '몇 초 전 위치와의 실변위'로 한다.
+// 정확도 20~40m 환경에선 제자리 지터만으로 순간 속도가 1~3m/s로 보여, 신호 대기 중에도
+// '움직임'으로 오인돼 일시정지가 안 걸린다(10차 현장 로그: 정지 28곳 중 3곳만 감지).
+// 지터는 한 점 주변을 맴돌므로 4초 창의 직선 변위는 0에 수렴하고, 실제 이동만 속도로 남는다.
+const EFF_WINDOW_MS = 5000;        // 실변위 속도 계산 창
+const JITTER_FRAC = 0.25;          // 정지 시 창 내 지터 변위 ≈ 정확도의 이 비율로 가정
+const RESUME_DIST_M = 15;          // 정지 앵커에서 이만큼 벗어나면 재시작(속도 스트릭의 보조)
+const TELEPORT_MPS = 12;           // 인접 측위 간 이 속도를 넘는 점프는 GPS 튐으로 버린다
 const MAX_LOG = 30;
 
 const median = (arr) => {
@@ -74,6 +82,11 @@ export default function RunningScreen({ route, navigation }) {
   const lastFixMsRef = useRef(0);      // 마지막으로 위치를 받은 시각
   const staleLoggedRef = useRef(false);
   const mantraCountRef = useRef(0);
+  // 실변위 판정용 최근 위치 버퍼 + 정지 앵커
+  const fixBufRef = useRef([]);
+  const pauseAnchorRef = useRef(null);
+  const prevAboveRef = useRef(false); // '이동' 디바운스 — 임계 초과가 연속 2회일 때만 인정
+
   // watch가 죽는 기기가 있어 폴링으로 위치를 보강한다
   const gpsFixFnRef = useRef(null);
   const gpsPollTimerRef = useRef(null);
@@ -292,53 +305,93 @@ export default function RunningScreen({ route, navigation }) {
       return;
     }
 
-    const prev = prevLocationRef.current;
-    if (prev) {
-      const dKm = haversineKm(prev.coords, loc.coords);
-      const dt = (loc.timestamp - prev.timestamp) / 1000;
-      if (dt > 0.3) {
-        const spd = (dKm * 1000) / dt; // m/s
-        const now = Date.now();
+    const now = Date.now();
+    const cur = { latitude: loc.coords.latitude, longitude: loc.coords.longitude, t: now, acc };
+    const fixes = fixBufRef.current;
+    fixes.push(cur);
+    while (fixes.length && now - fixes[0].t > EFF_WINDOW_MS * 3) fixes.shift();
 
-        if (spd > PAUSE_SPEED_MPS) lastAbovePauseMsRef.current = now;
-        if (spd >= RESUME_SPEED_MPS) {
-          if (!moveStreakStartRef.current) moveStreakStartRef.current = now;
-        } else {
-          moveStreakStartRef.current = 0;
-        }
-
-        if (isPausedRef.current) {
-          // 충분히 지속 이동해야 재시작 (살짝 움직임에 반응하지 않게)
-          if (
-            pauseReasonRef.current === 'auto' &&
-            moveStreakStartRef.current &&
-            now - moveStreakStartRef.current >= cfg.resumeSec * 1000
-          ) {
-            exitPause('auto');
-          }
-        } else if (spd > PAUSE_SPEED_MPS && spd < 6.5) {
-          const newKm = distanceKmRef.current + dKm;
-          distanceKmRef.current = newKm;
-          setDistanceKm(newKm);
-
-          const raw = 1000 / spd;
-          setRawPaceSec(raw);
-          const buf = paceBufRef.current;
-          buf.push(raw);
-          if (buf.length > PACE_BUF) buf.shift();
-          const smoothed = median(buf);
-          currentPaceRef.current = smoothed;
-          setCurrentPaceSec(smoothed);
-
-          // 거리 이벤트는 GPS 갱신마다 즉시 검사 — km 밟는 순간 발화
-          engineRef.current?.checkDistanceEvents({
-            distanceKm: newKm,
-            elapsedSec: elapsedSecRef.current,
-          });
-        }
-      }
+    // 실변위 속도 — 4초 이상 전의 위치와의 직선 거리 / 경과 시간
+    let base = null;
+    for (let i = fixes.length - 1; i >= 0; i--) {
+      if (now - fixes[i].t >= EFF_WINDOW_MS) { base = fixes[i]; break; }
     }
+    const effSpd = base ? (haversineKm(base, cur) * 1000) / ((now - base.t) / 1000) : null;
+
+    const prev = prevLocationRef.current;
     prevLocationRef.current = loc;
+    if (!prev) return;
+    const stepKm = haversineKm(prev.coords, loc.coords);
+    const dt = (loc.timestamp - prev.timestamp) / 1000;
+    if (dt <= 0.3) return;
+    const instSpd = (stepKm * 1000) / dt;
+
+    // 판정 속도: 실변위 우선, 창이 아직 안 찼으면(시작 직후) 순간 속도로 대체
+    const judgeSpd = effSpd != null ? effSpd : instSpd;
+
+    // 임계값을 GPS 정확도에 비례시킨다 — 정확도 25m면 제자리 지터만으로도
+    // 창 변위가 6m 안팎 나오므로, 고정 0.6m/s로는 정지를 영영 못 잡는다.
+    const spdNoise = ((acc ?? 20) * JITTER_FRAC) / (EFF_WINDOW_MS / 1000);
+    const stillTh = Math.max(PAUSE_SPEED_MPS, spdNoise);
+    const resumeTh = Math.max(RESUME_SPEED_MPS, spdNoise * 1.25);
+
+    // '이동'은 연속 2회 초과일 때만 인정 — 단발 지터 스파이크가 정지 감지를 리셋하지 않게
+    const above = judgeSpd > stillTh;
+    const moving = above && prevAboveRef.current;
+    prevAboveRef.current = above;
+    if (moving) lastAbovePauseMsRef.current = now;
+
+    if (judgeSpd >= resumeTh) {
+      if (!moveStreakStartRef.current) moveStreakStartRef.current = now;
+    } else {
+      moveStreakStartRef.current = 0;
+    }
+
+    if (isPausedRef.current) {
+      if (pauseReasonRef.current === 'auto') {
+        // 재시작: 실변위 속도가 지속되거나, 정지 지점에서 충분히 멀어졌을 때
+        const anchor = pauseAnchorRef.current;
+        const farM = anchor ? haversineKm(anchor, cur) * 1000 : 0;
+        // 정지 중 지터 변위는 대략 정확도의 절반 안쪽 — 그보다 조금 큰 반경이면 이동으로 확신 가능.
+        // (재개 오판 비용은 낮다: 틀려도 몇 초 뒤 다시 정지 감지됨)
+        const movedAway = farM > Math.max(RESUME_DIST_M, (acc || 20) * 0.6);
+        const sustained =
+          moveStreakStartRef.current && now - moveStreakStartRef.current >= cfg.resumeSec * 1000;
+        if (sustained || movedAway) exitPause('auto');
+      }
+      return;
+    }
+
+    // 자동 일시정지 — 코칭 루프(3초)를 기다리지 않고 측위마다 바로 판정
+    if (
+      elapsedSecRef.current > cfg.warmupSec &&
+      lastAbovePauseMsRef.current &&
+      now - lastAbovePauseMsRef.current > cfg.pauseSec * 1000
+    ) {
+      enterPause('auto');
+      return;
+    }
+
+    // 거리·페이스 — 실제 이동 중일 때만 누적 (정지 중 지터가 가짜 거리를 쌓지 않게)
+    if (moving && judgeSpd < 6.5 && instSpd < TELEPORT_MPS) {
+      const newKm = distanceKmRef.current + stepKm;
+      distanceKmRef.current = newKm;
+      setDistanceKm(newKm);
+
+      setRawPaceSec(1000 / instSpd);
+      const buf = paceBufRef.current;
+      buf.push(1000 / judgeSpd); // 페이스도 실변위 기반 — 지터 핑퐁(too_slow↔recovered) 완화
+      if (buf.length > PACE_BUF) buf.shift();
+      const smoothed = median(buf);
+      currentPaceRef.current = smoothed;
+      setCurrentPaceSec(smoothed);
+
+      // 거리 이벤트는 GPS 갱신마다 즉시 검사 — km 밟는 순간 발화
+      engineRef.current?.checkDistanceEvents({
+        distanceKm: newKm,
+        elapsedSec: elapsedSecRef.current,
+      });
+    }
   };
 
   // pauseReason을 GPS 콜백에서 최신값으로 읽기 위한 ref
@@ -355,6 +408,12 @@ export default function RunningScreen({ route, navigation }) {
     mantraCountRef.current = 0;   // 새 정지 구간마다 재정비 멘트 횟수 초기화
     stopTimer();
     beginPauseLog(reason);
+    // 재시작 판정용 앵커 = 정지 시점의 위치. 지터로 흔들려도 이 반경을 벗어나야 이동으로 본다.
+    pauseAnchorRef.current = fixBufRef.current[fixBufRef.current.length - 1] || null;
+    // 정지 전의 느린 페이스가 재시작 후 표시·판정을 오염시키지 않게 비운다
+    paceBufRef.current = [];
+    currentPaceRef.current = 0;
+    setCurrentPaceSec(0);
     bgmRef.current?.pause(reason);
     if (reason === 'manual') {
       // 수동 정지는 센서까지 내린다 (배터리)
@@ -378,6 +437,7 @@ export default function RunningScreen({ route, navigation }) {
       setPauseReason(null);
       moveStreakStartRef.current = 0;
       lastAbovePauseMsRef.current = Date.now();
+      pauseAnchorRef.current = null;
       endPauseLog();
       startTimer();
       bgmRef.current?.resume();

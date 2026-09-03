@@ -3,17 +3,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // 러닝 로그 — 현장 테스트 개선점을 체감이 아닌 데이터로 판단하기 위한 기록.
 // 정적 프로토타입 v10과 같은 스키마를 쓰되 케이던스 축을 추가했다(ver 11).
+// ver 12: 고도·고도정확도 축 추가 — 경사 코칭을 GPS 고도로 할 수 있는지 판단할 근거.
 
 const STORAGE_KEY = 'rm_history_v1';
 const MAX_RUNS = 40;              // 보관할 최근 러닝 수
 const MAX_BYTES = 4 * 1024 * 1024; // 이 크기를 넘으면 오래된 러닝의 샘플부터 비운다
 
 export const SAMPLE_FORMAT =
-  '[t초, 거리m, 페이스 초/km(-1 없음), 케이던스 spm(-1 없음), GPS정확도 m(-1 없음), 일시정지 0/1]';
+  '[t초, 거리m, 페이스 초/km(-1 없음), 케이던스 spm(-1 없음), GPS정확도 m(-1 없음), 일시정지 0/1, 고도m(null 없음), 고도정확도m(null 없음)]';
 
 export function createRunLog({ persona, targetPaceSec, targetDistanceKm, settings }) {
   return {
-    ver: 11,
+    ver: 12,
     date: new Date().toISOString(),
     platform: Platform.OS,
     persona,
@@ -30,7 +31,10 @@ export function createRunLog({ persona, targetPaceSec, targetDistanceKm, setting
   };
 }
 
-export function addSample(log, { t, distanceKm, paceSec, cadenceSpm, accuracyM, paused }) {
+export function addSample(
+  log,
+  { t, distanceKm, paceSec, cadenceSpm, accuracyM, paused, altitudeM, altitudeAccM }
+) {
   if (!log) return;
   log.samples.push([
     Math.round(t),
@@ -39,7 +43,33 @@ export function addSample(log, { t, distanceKm, paceSec, cadenceSpm, accuracyM, 
     cadenceSpm > 0 ? Math.round(cadenceSpm) : -1,
     accuracyM != null ? Math.round(accuracyM) : -1,
     paused ? 1 : 0,
+    // 고도는 음수(해수면 아래)가 정상값이라 -1을 '없음'으로 쓸 수 없다 → null.
+    // 경사 3%를 100m 구간에서 보려면 3m 차이를 읽어야 해서 0.1m까지 남긴다.
+    altitudeM != null ? Math.round(altitudeM * 10) / 10 : null,
+    altitudeAccM != null ? Math.round(altitudeAccM * 10) / 10 : null,
   ]);
+}
+
+// 고도 요약 — 샘플을 전부 파싱하지 않고도 'GPS 고도가 경사 판정에 쓸 만한가'를
+// 한눈에 보기 위한 집계. 없으면(브라우저가 altitude를 안 주면) have=0으로 드러난다.
+function summarizeAltitude(samples) {
+  const alts = [];
+  const accs = [];
+  for (const s of samples) {
+    if (s[6] != null) alts.push(s[6]);
+    if (s[7] != null) accs.push(s[7]);
+  }
+  if (!alts.length) return { have: 0, missing: samples.length };
+  const sorted = [...alts].sort((a, b) => a - b);
+  const accSorted = [...accs].sort((a, b) => a - b);
+  return {
+    have: alts.length,
+    missing: samples.length - alts.length,
+    minM: sorted[0],
+    maxM: sorted[sorted.length - 1],
+    spanM: +(sorted[sorted.length - 1] - sorted[0]).toFixed(1),
+    accMedM: accSorted.length ? accSorted[Math.floor(accSorted.length / 2)] : null,
+  };
 }
 
 export function addSpeech(log, { t, sit, text, src }) {
@@ -70,6 +100,7 @@ export function finalizeRunLog(log, { elapsedSec, distanceKm, avgPaceSec, goalRe
     pauses: log.pauses.length,
     goal: !!goalReached,
   };
+  log.altitude = summarizeAltitude(log.samples);
   return log;
 }
 

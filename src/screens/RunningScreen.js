@@ -4,8 +4,8 @@ import {
   SafeAreaView, StatusBar, Vibration, ScrollView, Animated, Easing, Platform,
 } from 'react-native';
 import * as Location from 'expo-location';
-import { Accelerometer } from 'expo-sensors';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { CadenceMeter, requestMotionPermission } from '../sensors/CadenceMeter';
 import { CoachingEngine } from '../engine/CoachingEngine';
 import {
   createRunLog, addSample, addSpeech, openPause, closePause,
@@ -62,6 +62,8 @@ export default function RunningScreen({ route, navigation }) {
   const [accuracyM, setAccuracyM] = useState(null);
   const [gpsStale, setGpsStale] = useState(false);
   const [cadenceSpm, setCadenceSpm] = useState(0);
+  const [motionOk, setMotionOk] = useState(null); // 케이던스 센서가 붙었는지 (null=확인 전)
+  const [altInfo, setAltInfo] = useState(null);   // { m, acc } — 고도 관측용
   const [muted, setMuted] = useState(false);
   const [audioStat, setAudioStat] = useState({ clip: 0, tts: 0 });
   const [coachLine, setCoachLine] = useState('GPS를 잡으면 곧 시작할게요.');
@@ -99,9 +101,8 @@ export default function RunningScreen({ route, navigation }) {
   const timerRef = useRef(null);
   const coachingTimerRef = useRef(null);
   const locationSubscriptionRef = useRef(null);
-  const accelSubscriptionRef = useRef(null);
+  const cadenceRef = useRef(null);
   const prevLocationRef = useRef(null);
-  const accelWindowRef = useRef([]);
   const paceBufRef = useRef([]);
   const transitionLockRef = useRef(false);
 
@@ -109,6 +110,10 @@ export default function RunningScreen({ route, navigation }) {
   const runLogRef = useRef(null);
   const gpsAccuracyRef = useRef(null);
   const pauseStartMsRef = useRef(0);
+  // 고도 — 아직 코칭에 쓰지 않고 로그에만 남긴다. GPS 고도가 경사 판정에
+  // 쓸 만한 정확도인지 현장 데이터로 확인한 뒤에 기능을 붙이기 위해서다.
+  const altitudeRef = useRef(null);
+  const altitudeAccRef = useRef(null);
 
   // 케이던스 동기화 BGM
   const bgmRef = useRef(null);
@@ -166,21 +171,9 @@ export default function RunningScreen({ route, navigation }) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
-  const updateCadence = useCallback((accelData) => {
-    const mag = Math.sqrt(accelData.x ** 2 + accelData.y ** 2 + accelData.z ** 2);
-    const win = accelWindowRef.current;
-    win.push({ mag, time: Date.now() });
-    if (win.length > 50) win.shift();
-    if (win.length >= 50) {
-      const avg = win.reduce((s, w) => s + w.mag, 0) / win.length;
-      let peaks = 0;
-      for (let i = 1; i < win.length - 1; i++) {
-        if (win[i].mag > avg * 1.05 && win[i].mag >= win[i - 1].mag && win[i].mag >= win[i + 1].mag) peaks++;
-      }
-      const spm = Math.min(peaks * 60, 220);
-      setCadenceSpm(spm);
-      cadenceSpmRef.current = spm;
-    }
+  const onCadence = useCallback((spm) => {
+    cadenceSpmRef.current = spm;
+    setCadenceSpm(spm);
   }, []);
 
   // GPS 문제를 로그에 남긴다 — 현장에서 무슨 일이 있었는지 사후에 알 수 있게.
@@ -221,6 +214,8 @@ export default function RunningScreen({ route, navigation }) {
             cadenceSpm: cadenceSpmRef.current,
             accuracyM: gpsAccuracyRef.current,
             paused: false,
+            altitudeM: altitudeRef.current,
+            altitudeAccM: altitudeAccRef.current,
           });
         }
         return next;
@@ -293,6 +288,11 @@ export default function RunningScreen({ route, navigation }) {
     if (!loc?.coords) return;
     const acc = loc.coords.accuracy;
     gpsAccuracyRef.current = acc;
+    // 고도는 수평 정확도 필터보다 앞에서 받는다 — 걸러진 측위에도 고도가 실려 오는지
+    // 포함해 '이 기기가 고도를 주기는 하는가'를 온전히 관측하기 위해.
+    altitudeRef.current = loc.coords.altitude ?? null;
+    altitudeAccRef.current = loc.coords.altitudeAccuracy ?? null;
+    setAltInfo({ m: altitudeRef.current, acc: altitudeAccRef.current });
     lastFixMsRef.current = Date.now();
     fixSrcRef.current[source] = (fixSrcRef.current[source] || 0) + 1;
     setAccuracyM(acc);
@@ -420,8 +420,7 @@ export default function RunningScreen({ route, navigation }) {
       stopGpsBackstop();
       locationSubscriptionRef.current?.remove();
       locationSubscriptionRef.current = null;
-      accelSubscriptionRef.current?.remove();
-      accelSubscriptionRef.current = null;
+      cadenceRef.current?.stop();
     }
     engineRef.current?.sayPaused();
   };
@@ -452,6 +451,12 @@ export default function RunningScreen({ route, navigation }) {
     if (transitionLockRef.current) return;
     transitionLockRef.current = true;
     try {
+      // ★모션 권한을 위치 권한보다 먼저 요청한다. iOS Safari는 requestPermission()이
+      //  사용자 제스처 안에서 호출돼야 하는데, 위치 권한 팝업을 먼저 await하면
+      //  그 사이 제스처 자격이 만료돼 모션 이벤트가 영영 안 온다.
+      cadenceRef.current = new CadenceMeter();
+      cadenceRef.current.permission = await requestMotionPermission();
+
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         setLocationError('위치 권한이 필요해요. 설정에서 허용해주세요.');
@@ -557,15 +562,15 @@ export default function RunningScreen({ route, navigation }) {
         noteGpsProblem('위치 구독 실패: ' + (e?.message || e));
       }
     }
-    if (!accelSubscriptionRef.current) {
-      // 케이던스는 있으면 좋은 부가 정보 — 미지원 기기(웹 등)에서 실패해도 러닝은 계속된다
-      try {
-        Accelerometer.setUpdateInterval(50);
-        accelSubscriptionRef.current = Accelerometer.addListener(updateCadence);
-      } catch {
-        accelSubscriptionRef.current = null;
-      }
-    }
+    // 케이던스는 있으면 좋은 부가 정보 — 미지원 기기에서 실패해도 러닝은 계속된다.
+    // 실패 사유는 조용히 삼키지 말고 로그에 남긴다(이전엔 삼켜서 원인을 못 찾았다).
+    const noMotion = () =>
+      noteGpsProblem('케이던스 센서 없음: ' + (cadenceRef.current?.error || ''), true);
+    const ok = cadenceRef.current?.start(onCadence, (avail) => {
+      setMotionOk(avail);
+      if (!avail) noMotion();
+    });
+    if (!ok) { setMotionOk(false); noMotion(); }
   };
 
   const toggleMute = () => {
@@ -581,7 +586,7 @@ export default function RunningScreen({ route, navigation }) {
     stopCoachingLoop();
     stopGpsBackstop();
     locationSubscriptionRef.current?.remove();
-    accelSubscriptionRef.current?.remove();
+    cadenceRef.current?.stop();
     const goalReached = !!engineRef.current?.goalReached;
     await engineRef.current?.destroy();
     await bgmRef.current?.stop();
@@ -595,7 +600,11 @@ export default function RunningScreen({ route, navigation }) {
 
     endPauseLog();
     // 위치를 watch로 받았는지 폴링으로 받았는지 남긴다 — 기기별 GPS 문제 진단용
-    if (runLogRef.current) runLogRef.current.gpsFixes = { ...fixSrcRef.current };
+    if (runLogRef.current) {
+      runLogRef.current.gpsFixes = { ...fixSrcRef.current };
+      // 케이던스 센서가 붙었는지·표본이 충분히 빨랐는지 — 값이 0이어도 원인을 구분할 수 있게
+      runLogRef.current.cadence = cadenceRef.current?.stats() || null;
+    }
     const log = finalizeRunLog(runLogRef.current, {
       elapsedSec: elapsed,
       distanceKm: dist,
@@ -624,7 +633,7 @@ export default function RunningScreen({ route, navigation }) {
       stopCoachingLoop();
       stopGpsBackstop();
       locationSubscriptionRef.current?.remove();
-      accelSubscriptionRef.current?.remove();
+      cadenceRef.current?.stop();
       engineRef.current?.destroy();
       bgmRef.current?.stop();
       deactivateKeepAwake();
@@ -686,6 +695,16 @@ export default function RunningScreen({ route, navigation }) {
             <Text style={styles.debugKey}>  위치 </Text>
             <Text style={{ color: fixSrcRef.current.watch > 0 ? C.good : C.warm }}>
               {fixSrcRef.current.watch}/{fixSrcRef.current.poll}
+            </Text>
+            <Text style={styles.debugKey}>  고도 </Text>
+            <Text style={{ color: altInfo?.m == null ? C.bad : C.good }}>
+              {altInfo?.m == null
+                ? '없음'
+                : `${Math.round(altInfo.m)}m${altInfo.acc != null ? `±${Math.round(altInfo.acc)}` : ''}`}
+            </Text>
+            <Text style={styles.debugKey}>  모션 </Text>
+            <Text style={{ color: motionOk === false ? C.bad : motionOk ? C.good : C.warm }}>
+              {motionOk === false ? '없음' : motionOk ? '켜짐' : '…'}
             </Text>
             <Text style={styles.debugKey}>  오디오 </Text>
             <Text style={{ color: C.good }}>{audioStat.clip}</Text>/

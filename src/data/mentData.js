@@ -277,6 +277,17 @@ export const PACE_THRESHOLDS = {
 // 케이던스 임계값 (spm: steps per minute)
 export const CADENCE_THRESHOLD = 160; // 이 이하면 cadence_low 트리거
 
+// 걷기/뛰기 판정 — 11차 현장 로그(2026-09-12)에서 케이던스가 121(걷기) / 173(뛰기)로
+// 뚜렷하게 갈렸다. 페이스도 9'01" / 5'38"로 따라붙고 계산된 보폭이 0.92m / 1.03m로
+// 둘 다 물리적으로 맞아, 케이던스만으로 두 상태를 구분할 수 있다.
+// 경계에서 상태가 펄럭이지 않게 진입·이탈 임계를 분리한다.
+export const WALK_ENTER_SPM = 140;
+export const WALK_EXIT_SPM = 150;
+export const ACTIVITY_SUSTAIN = 2; // 이 횟수 연속 같은 판정이어야 상태를 바꾼다
+// '뛰는 중 저케이던스'가 이 횟수(코칭 주기 3초 × 3 = 9초) 연속 확인될 때만 cadence_low 발화.
+// 뛰기→걷기 전환에 케이던스가 임계를 스쳐 지나가는 몇 초를 걸러내기 위한 것.
+export const LOW_CADENCE_SUSTAIN = 3;
+
 // final_push 시작 거리 (목표 거리의 이 비율부터)
 export const FINAL_PUSH_RATIO = 0.85;
 

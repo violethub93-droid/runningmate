@@ -23,6 +23,11 @@ const GPS_UPDATE_MS = 1000;
 const PACE_BUF = 5;                // 페이스 중앙값 스무딩 창
 const PAUSED_MANTRA_MS = 50000;    // 정지 상태에서 재정비 멘트 반복 간격
 const PAUSED_MANTRA_MAX = 3;       // 재정비 멘트는 이 횟수까지만 (계속 반복하면 잔소리)
+// ★정지 직후 바로 말하지 않고 이만큼 기다린다. 11차 로그에 5초짜리 정지가 2회 있었는데
+//  "발목 돌리고 종아리 풀어줘요"가 끝나기도 전에 다시 뛰기 시작해 재시작 멘트가 겹쳤다.
+//  짧은 멈춤은 조용히 지나가는 게 맞다(재정비 멘트를 안 냈으면 재시작 멘트도 안 낸다).
+// (시뮬에서 7초 정지가 6초 지연을 넘겨 발화했다 → 8초로 둔다. 8초 이하 멈춤은 조용히 지나간다.)
+const PAUSE_SPEAK_DELAY_MS = 8000;
 const GPS_STALE_MS = 15000;        // 이 시간 동안 위치가 안 들어오면 'GPS 없음'으로 본다
 // ★웹에서는 expo-location의 watchPositionAsync가 첫 위치를 받은 뒤 스스로 watch를
 // 해제해 버려(생성 id == 해제 id 확인) 사실상 1회용이다. 그래서 웹은 폴링이 주 수단이고,
@@ -95,7 +100,8 @@ export default function RunningScreen({ route, navigation }) {
   const gpsPollBusyRef = useRef(false);
   const fixSrcRef = useRef({ watch: 0, poll: 0, rejected: 0 });
   const moveStreakStartRef = useRef(0);
-  const pausedMantraAtRef = useRef(0);
+  const pausedSpeakAtRef = useRef(0);  // 이 시각 이후에 재정비 멘트를 낼 수 있다
+  const pausedSpokenRef = useRef(false); // 이번 정지 구간에서 재정비 멘트를 냈는가
 
   const engineRef = useRef(null);
   const timerRef = useRef(null);
@@ -216,6 +222,7 @@ export default function RunningScreen({ route, navigation }) {
             paused: false,
             altitudeM: altitudeRef.current,
             altitudeAccM: altitudeAccRef.current,
+            impactMs2: cadenceRef.current?.impact ?? null,
           });
         }
         return next;
@@ -246,10 +253,11 @@ export default function RunningScreen({ route, navigation }) {
         if (
           !engineRef.current.isSpeaking &&
           mantraCountRef.current < PAUSED_MANTRA_MAX &&
-          Date.now() - pausedMantraAtRef.current > PAUSED_MANTRA_MS
+          Date.now() >= pausedSpeakAtRef.current
         ) {
-          pausedMantraAtRef.current = Date.now();
+          pausedSpeakAtRef.current = Date.now() + PAUSED_MANTRA_MS;
           mantraCountRef.current += 1;
+          pausedSpokenRef.current = true;
           await engineRef.current.sayPaused();
         }
         return;
@@ -404,7 +412,10 @@ export default function RunningScreen({ route, navigation }) {
     setIsPaused(true);
     setPauseReason(reason);
     moveStreakStartRef.current = 0;
-    pausedMantraAtRef.current = Date.now();
+    // 곧바로 말하지 않고 코칭 루프가 PAUSE_SPEAK_DELAY_MS 뒤에 내도록 맡긴다 —
+    // 그 사이에 다시 움직이면 이 정지는 아무 말 없이 지나간다.
+    pausedSpeakAtRef.current = Date.now() + PAUSE_SPEAK_DELAY_MS;
+    pausedSpokenRef.current = false;
     mantraCountRef.current = 0;   // 새 정지 구간마다 재정비 멘트 횟수 초기화
     stopTimer();
     beginPauseLog(reason);
@@ -421,8 +432,12 @@ export default function RunningScreen({ route, navigation }) {
       locationSubscriptionRef.current?.remove();
       locationSubscriptionRef.current = null;
       cadenceRef.current?.stop();
+      // 버튼을 직접 누른 것이므로 지체 없이 응답한다 — 지연은 자동 정지에만 적용
+      pausedSpokenRef.current = true;
+      mantraCountRef.current = 1;
+      pausedSpeakAtRef.current = Date.now() + PAUSED_MANTRA_MS;
+      engineRef.current?.sayPaused();
     }
-    engineRef.current?.sayPaused();
   };
 
   const exitPause = async (reason) => {
@@ -441,7 +456,9 @@ export default function RunningScreen({ route, navigation }) {
       startTimer();
       bgmRef.current?.resume();
       await subscribeSensors();
-      await engineRef.current?.sayResume();
+      // 재정비 멘트를 낸 정지에만 재시작 멘트를 낸다 — 조용히 지나간 짧은 멈춤에
+      // "다시 가볼까요"만 불쑥 나오면 앞뒤가 안 맞는다.
+      if (pausedSpokenRef.current) await engineRef.current?.sayResume();
     } finally {
       transitionLockRef.current = false;
     }
@@ -604,6 +621,8 @@ export default function RunningScreen({ route, navigation }) {
       runLogRef.current.gpsFixes = { ...fixSrcRef.current };
       // 케이던스 센서가 붙었는지·표본이 충분히 빨랐는지 — 값이 0이어도 원인을 구분할 수 있게
       runLogRef.current.cadence = cadenceRef.current?.stats() || null;
+      // 걷기가 감지됐으면 페이스를 평균 기준으로 판단했다는 뜻 — 로그 해석에 필요
+      runLogRef.current.intervalMode = !!engineRef.current?.sawWalk;
     }
     const log = finalizeRunLog(runLogRef.current, {
       elapsedSec: elapsed,
@@ -704,7 +723,15 @@ export default function RunningScreen({ route, navigation }) {
             </Text>
             <Text style={styles.debugKey}>  모션 </Text>
             <Text style={{ color: motionOk === false ? C.bad : motionOk ? C.good : C.warm }}>
-              {motionOk === false ? '없음' : motionOk ? '켜짐' : '…'}
+              {motionOk === false
+                ? '없음'
+                : !motionOk
+                  ? '…'
+                  : engineRef.current?.activity === 'walk'
+                    ? '걷기'
+                    : engineRef.current?.activity === 'run'
+                      ? '뛰기'
+                      : '켜짐'}
             </Text>
             <Text style={styles.debugKey}>  오디오 </Text>
             <Text style={{ color: C.good }}>{audioStat.clip}</Text>/

@@ -69,6 +69,7 @@ export class CadenceMeter {
     this.available = null;
     this.error = null;
     this.maxSpm = 0;
+    this.impact = null; // 최근 창의 가속도 진폭(m/s²) — 걷기/뛰기 판정 근거 수집용
   }
 
   // onStatus(available) — 첫 이벤트를 기다려 가용 여부가 확정되면 호출된다.
@@ -146,6 +147,10 @@ export class CadenceMeter {
 
     const mean = buf.reduce((s, b) => s + b.m, 0) / buf.length;
     const sd = Math.sqrt(buf.reduce((s, b) => s + (b.m - mean) ** 2, 0) / buf.length);
+    // 진폭 = 착지 충격 강도. 뛰기는 비행 구간이 있어 걷기보다 훨씬 세게 찍힌다.
+    // 지금은 로그에만 남긴다 — 걷기/뛰기 판정을 케이던스 대신 이걸로 하면 더 정확할 텐데
+    // 실측 분포가 없어 임계값을 정할 근거가 없다. 다음 러닝 로그로 정한다.
+    this.impact = Math.round(sd * 10) / 10;
     // 정지 상태에선 신호가 평평하다. 이 문턱이 없으면 센서 노이즈의 미세한
     // 극대점들이 그대로 '걸음'으로 세어져 멈춰 있어도 케이던스가 잡힌다.
     if (sd < MIN_AMPL) return 0;

@@ -10,7 +10,7 @@ const MAX_RUNS = 40;              // 보관할 최근 러닝 수
 const MAX_BYTES = 4 * 1024 * 1024; // 이 크기를 넘으면 오래된 러닝의 샘플부터 비운다
 
 export const SAMPLE_FORMAT =
-  '[t초, 거리m, 페이스 초/km(-1 없음), 케이던스 spm(-1 없음), GPS정확도 m(-1 없음), 일시정지 0/1, 고도m(null 없음), 고도정확도m(null 없음)]';
+  '[t초, 거리m, 페이스 초/km(-1 없음), 케이던스 spm(-1 없음), GPS정확도 m(-1 없음), 일시정지 0/1, 고도m(null 없음), 고도정확도m(null 없음), 가속도진폭 m/s²(null 없음)]';
 
 export function createRunLog({ persona, targetPaceSec, targetDistanceKm, settings }) {
   return {
@@ -33,7 +33,7 @@ export function createRunLog({ persona, targetPaceSec, targetDistanceKm, setting
 
 export function addSample(
   log,
-  { t, distanceKm, paceSec, cadenceSpm, accuracyM, paused, altitudeM, altitudeAccM }
+  { t, distanceKm, paceSec, cadenceSpm, accuracyM, paused, altitudeM, altitudeAccM, impactMs2 }
 ) {
   if (!log) return;
   log.samples.push([
@@ -47,6 +47,7 @@ export function addSample(
     // 경사 3%를 100m 구간에서 보려면 3m 차이를 읽어야 해서 0.1m까지 남긴다.
     altitudeM != null ? Math.round(altitudeM * 10) / 10 : null,
     altitudeAccM != null ? Math.round(altitudeAccM * 10) / 10 : null,
+    impactMs2 != null ? impactMs2 : null,
   ]);
 }
 

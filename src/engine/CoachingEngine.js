@@ -7,6 +7,10 @@ import {
   FINAL_PUSH_RATIO,
   HALFWAY_RATIO,
   SLOPE_THRESHOLDS,
+  WALK_ENTER_SPM,
+  WALK_EXIT_SPM,
+  ACTIVITY_SUSTAIN,
+  LOW_CADENCE_SUSTAIN,
   milestoneFallbackText,
 } from '../data/mentData';
 import { DEFAULTS, DIST_EVENT_GAP_MS, RESUME_GUARD_MS } from '../data/settings';
@@ -40,6 +44,13 @@ export class CoachingEngine {
     this.lastSpeakAtSec = -Infinity;
     this.recentDev = [];
     this.wasDeviated = false;
+    // 걷기/뛰기 상태 — 초보 러너는 대개 뛰다 걷다를 반복하는데(run/walk 인터벌),
+    // 걷는 구간을 '페이스 이탈'·'케이던스 부족'으로 보면 잔소리가 된다.
+    this.activity = 'unknown';
+    this.activityCand = null;
+    this.activityStreak = 0;
+    this.sawWalk = false;     // 한 번이라도 걸었는가 — 로그 해석용(인터벌 러닝이었는지)
+    this.lowCadStreak = 0;    // '뛰는 중 저케이던스'가 연속 몇 번 확인됐는가
     this.guardUntil = 0; // v7: 재시작 우선 구간 — 이 시각까지 페이스 코칭 보류
     this.lastDistEventAt = -Infinity; // v8: 거리 이벤트 재발화 최소 간격 추적
     this.playToken = 0; // 재생 취소-안전성: 강제 발화가 선점하면 이전 재생의 뒤늦은 완료 콜백이 상태를 덮어쓰지 못하게 함
@@ -150,6 +161,8 @@ export class CoachingEngine {
     const t = this.elapsedSec;
     const { warmupSec, globalGapSec, checkinSec, sensSec, judgeBasis } = this.cfg;
 
+    this._updateActivity(cadenceSpm);
+
     if (t < warmupSec) return;                      // ① 시작 침묵(워밍업)
     if (Date.now() < this.guardUntil) return;       // ①-b 재시작 멘트 우선 구간
     if (this.isSpeaking) return;                    // ② 발화 중 금지
@@ -164,12 +177,36 @@ export class CoachingEngine {
       }
     }
 
-    // 케이던스 코칭
-    if (cadenceSpm > 0 && cadenceSpm < CADENCE_THRESHOLD) {
+    const walking = this.activity === 'walk';
+
+    // 케이던스 코칭 — 걷는 중에는 하지 않는다.
+    // 11차 로그: cadence_low 10회(전체 발화의 20%)가 전부 걷기 구간이었고,
+    // "보폭이 넓어요, 발 회전을 빠르게"는 걷는 사람에게 맞는 조언이 아니다.
+    // ★뛰기→걷기 전환 구간도 걸러야 한다. 케이던스가 175에서 120으로 떨어지는 몇 초 동안은
+    //  아직 상태가 '뛰기'여서 150 부근 값에 트리거가 걸린다(시뮬에서 실제 발생).
+    //  그래서 '뛰는 중 저케이던스'가 연속으로 확인될 때만 발화한다 — 전환은 그 전에 끝난다.
+    if (!walking && cadenceSpm > 0 && cadenceSpm < CADENCE_THRESHOLD) {
+      this.lowCadStreak += 1;
+    } else {
+      this.lowCadStreak = 0;
+    }
+    if (this.lowCadStreak >= LOW_CADENCE_SUSTAIN) {
       if (await this._trySay('cadence_low')) return;
     }
 
+    // 걷는 동안은 페이스 코칭을 하지 않는다 — 걷기는 이탈이 아니라 회복이다.
+    // 존재감은 유지해야 하므로(2분 넘게 완전 침묵하면 앱이 죽은 것처럼 느껴진다)
+    // 가장 빈도가 낮은 체크인만 남긴다.
+    if (walking) {
+      this.recentDev = []; // 걷기 중 편차가 재개 직후 판정을 오염시키지 않게
+      if (t - this.lastSpeakAtSec > checkinSec) await this._trySay('idle_checkin');
+      return;
+    }
+
     // ④ 페이스 판단 — 현재 / 평균 / 혼합
+    // ※인터벌일 때 평균 기준으로 바꿔봤으나 되돌렸다: 걷기가 평균을 끌어내려
+    //  4'30"로 뛰는 중에 '여유 있어 보여요'가 나가는 새 오작동이 생겼다.
+    //  걷기 구간을 아예 판단에서 빼는 것(위 walking 가드)이 옳은 처리다.
     let dev = null;
     if (judgeBasis === 'avg') {
       if (avgPaceSec > 0) dev = avgPaceSec - this.targetPaceSec;
@@ -212,6 +249,31 @@ export class CoachingEngine {
 
     // ⑥ 주기적 체크인 (최하위)
     if (t - this.lastSpeakAtSec > checkinSec) await this._trySay('idle_checkin');
+  }
+
+  // 케이던스로 걷기/뛰기를 판정한다. 히스테리시스 + 연속 판정으로 경계에서 펄럭이지 않게.
+  // 케이던스가 없는 구간(11차 로그에서 12%)은 직전 상태를 유지한다 — 추측하지 않는다.
+  _updateActivity(cadenceSpm) {
+    if (!(cadenceSpm > 0)) return;
+    const next =
+      cadenceSpm < WALK_ENTER_SPM ? 'walk' : cadenceSpm > WALK_EXIT_SPM ? 'run' : null;
+    if (!next || next === this.activity) {
+      this.activityCand = null;
+      this.activityStreak = 0;
+      return;
+    }
+    if (next !== this.activityCand) {
+      this.activityCand = next;
+      this.activityStreak = 1;
+    } else {
+      this.activityStreak += 1;
+    }
+    if (this.activityStreak >= ACTIVITY_SUSTAIN) {
+      this.activity = next;
+      this.activityCand = null;
+      this.activityStreak = 0;
+      if (next === 'walk') this.sawWalk = true;
+    }
   }
 
   // 쿨다운을 확인하고 발화 — 발화했으면 true (v10의 firePool과 같은 계약)

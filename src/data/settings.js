@@ -122,7 +122,9 @@ export function changedSummary(cfg) {
 }
 
 export function paceLabel(sec) {
-  if (!sec || sec <= 0) return "--'--";
+  // 제자리에 서 있으면 순간 속도가 0이 되어 1000/0 = Infinity가 흘러든다.
+  // (현장 디버그 줄에 "원시 Infinity'NaN"으로 노출됐다)
+  if (!Number.isFinite(sec) || sec <= 0) return "--'--";
   const m = Math.floor(sec / 60);
   const s = Math.round(sec % 60);
   return `${m}'${String(s).padStart(2, '0')}`;

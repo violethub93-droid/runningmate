@@ -31,9 +31,15 @@ const audioMap = {
   pace_on_target_coach_03: require('../../assets/audio/pace_on_target_coach_03.mp3'),
   pace_on_target_friend_01: require('../../assets/audio/pace_on_target_friend_01.mp3'),
 
-  // ── 케이던스 낮음 (2개 적용) ─────────────────────────────
-  cadence_low_coach_01: require('../../assets/audio/cadence_low_coach_01.mp3'),
-  cadence_low_friend_01: require('../../assets/audio/cadence_low_friend_01.mp3'),
+  // ── 케이던스 낮음 (4개 적용) ─────────────────────────────
+  // coach_01·friend_01은 연결 해제 — 둘 다 "보폭이 넓다"는 틀린 전제를 말한다
+  // (코칭부 판정: 트리거 시점 보폭은 오히려 평균보다 짧았다). friend_01은 사장님이 음원을
+  // 직접 들어 확인. 두 파일 모두 assets/audio에 남겨둠(되돌리기용).
+  // friend_03도 무릎 인과 주장(등급 D)으로 미연결.
+  cadence_low_coach_02: require('../../assets/audio/cadence_low_coach_02.mp3'),
+  cadence_low_coach_03: require('../../assets/audio/cadence_low_coach_03.mp3'),
+  cadence_low_coach_04: require('../../assets/audio/cadence_low_coach_04.mp3'),
+  cadence_low_friend_02: require('../../assets/audio/cadence_low_friend_02.mp3'),
 
   // ── 오르막 (2개 적용) ────────────────────────────────────
   uphill_coach_01: require('../../assets/audio/uphill_coach_01.mp3'),

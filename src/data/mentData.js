@@ -85,12 +85,21 @@ export const SITUATIONS = {
   cadence_low: {
     cooldown_sec: 60,
     variants: {
-      coach: ['보폭이 조금 넓어요. 발 회전을 빠르게, 무릎 부담 줄여줘요.'],
-      friend: ['보폭 줄이자, 빠르게 빠르게!'],
+      coach: [
+        '발을 몸 아래로. 짧고 빠르게 디뎌봐요.',
+        '성큼성큼보다 또각또각. 발걸음을 촘촘하게.',
+        '보폭을 살짝 줄이고 케이던스를 올려봐요.',
+      ],
+      // friend_01은 연결 해제 — 실제 음원이 "보폭 좀 넓다~"라고 말한다(사장님 청취 확인).
+      // 코치형 01과 같은 틀린 전제다(트리거 시점 보폭은 오히려 짧았다). 게다가 여기 적혀 있던
+      // 문구("보폭 줄이자, 빠르게 빠르게!")가 음원과 달라 로그에 들리지 않은 문장이 남고 있었다.
+      // 변형이 1개뿐이지만 걷기 인식 이후 cadence_low는 러닝당 1회 안팎이라 반복 피로는 작다.
+      // 두 번째 변형(friend_04)은 신규 합성이 필요해 라이선스 조사 뒤로 보류.
+      friend: ['발 몸 아래로! 또각또각 가자.'],
     },
     audioKeys: {
-      coach: ['cadence_low_coach_01'],
-      friend: ['cadence_low_friend_01'],
+      coach: ['cadence_low_coach_02', 'cadence_low_coach_03', 'cadence_low_coach_04'],
+      friend: ['cadence_low_friend_02'],
     },
   },
   uphill_detected: {
